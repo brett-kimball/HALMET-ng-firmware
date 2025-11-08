@@ -24,6 +24,7 @@
 #include "sensesp/transforms/lambda_transform.h"
 #include "sensesp/transforms/linear.h"
 #include "sensesp/ui/config_item.h"
+#include "sensesp/system/observablevalue.h"
 #include "sensesp_app_builder.h"
 #define BUILDER_CLASS SensESPAppBuilder
 
@@ -81,6 +82,8 @@ const int kTestOutputFrequency = 380;
 // The setup function performs one-time application initialization.
 void setup() {
   SetupLogging(ESP_LOG_DEBUG);
+  // esp_log_level_set("*", ESP_LOG_DEBUG);
+
 
   // These calls can be used for fine-grained control over the logging level.
   // esp_log_level_set("*", esp_log_level_t::ESP_LOG_DEBUG);
@@ -100,7 +103,7 @@ void setup() {
                     //->set_wifi("My WiFi SSID", "my_wifi_password")
                     //->set_sk_server("192.168.10.3", 80)
                     // EDIT: Enable OTA updates with a password.
-                    //->enable_ota("my_ota_password")
+                    ->enable_ota("thisisfine")
                     ->get_app();
 
   // initialize the I2C bus
@@ -165,23 +168,25 @@ void setup() {
   nmea2000->Open();
 
   // No need to parse the messages at every single loop iteration; 1 ms will do
-  event_loop()->onRepeat(1, []() { nmea2000->ParseMessages(); });
+  event_loop()->onRepeat(10, []() { nmea2000->ParseMessages(); });
 
   // Initialize the OLED display
   bool display_present = InitializeSSD1306(sensesp_app->get(), &display, i2c);
 
+if (!global_sk_enable) {
+  global_sk_enable = std::make_shared<sensesp::PersistingObservableValue<bool>>(true, "/System/Enable Signal K Output");
+  ConfigItem(global_sk_enable)
+      ->set_title("Enable Signal K Output")
+      ->set_description("Global toggle for all analog Signal K paths")
+      ->set_sort_order(0);
+}
+
   ///////////////////////////////////////////////////////////////////
   // Analog inputs
-
-  bool enable_signalk_output = true;
-
-  // Connect the tank senders.
-  // EDIT: To enable more tanks, uncomment the lines below.
-  auto tank_a1_volume = ConnectTankSender(ads1115, 0, "Fuel", "fuel.main", 3000,
-                                          enable_signalk_output);
-  // auto tank_a2_volume = ConnectTankSender(ads1115, 1, "A2");
-  // auto tank_a3_volume = ConnectTankSender(ads1115, 2, "A3");
-  // auto tank_a4_volume = ConnectTankSender(ads1115, 3, "A4");
+  auto a01 = ConnectAnalogInput(ads1115, 0, "A01", "a01", 3000);
+  auto a02 = ConnectAnalogInput(ads1115, 1, "A02", "a02", 3010);
+  auto a03 = ConnectAnalogInput(ads1115, 2, "A03", "a03", 3020);
+  auto a04 = ConnectAnalogInput(ads1115, 3, "A04", "a04", 3030);
 
 #ifdef ENABLE_NMEA2000_OUTPUT
   // Tank 1, instance 0. Capacity 200 liters. You can change the capacity
@@ -197,7 +202,7 @@ void setup() {
 
   tank_a1_volume->connect_to(&(tank_a1_sender->tank_level_));
 #endif  // ENABLE_NMEA2000_OUTPUT
-
+/*
   if (display_present) {
     // EDIT: Duplicate the lines below to make the display show all your tanks.
     tank_a1_volume->connect_to(new LambdaConsumer<float>(
@@ -214,6 +219,7 @@ void setup() {
 
   a2_voltage->connect_to(new LambdaConsumer<float>(
       [](float value) { debugD("Voltage A2: %f", value); }));
+      
 
   // If you want to output something else than the voltage value,
   // you can insert a suitable transform here.
@@ -225,10 +231,11 @@ void setup() {
   a2_voltage->connect_to(
       new SKOutputFloat("sensors.a2.voltage", "Analog Voltage A2",
                         new SKMetadata("V", "Analog Voltage A2")));
+  */
   // Example of how to output the distance value to Signal K.
-  // a2_distance->connect_to(
-  //     new SKOutputFloat("sensors.a2.distance", "Analog Distance A2",
-  //                       new SKMetadata("m", "Analog Distance A2")));
+  a01->connect_to(
+       new SKOutputFloat("sensors.a2.distance", "Analog nig A2",
+                         new SKMetadata("m", "Analog nig A2")));
 
   ///////////////////////////////////////////////////////////////////
   // Digital alarm inputs

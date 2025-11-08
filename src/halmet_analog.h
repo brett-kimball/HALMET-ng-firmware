@@ -5,16 +5,17 @@
 
 #include "sensesp/sensors/sensor.h"
 #include "sensesp_base_app.h"
-
+#include "sensesp/ui/ui_controls.h"
 namespace halmet {
 
 // HALMET voltage divider scale factor
 const float kVoltageDividerScale = 33.3 / 3.3;
+extern std::shared_ptr<sensesp::PersistingObservableValue<bool>> global_sk_enable;
 
-sensesp::FloatProducer* ConnectTankSender(Adafruit_ADS1115* ads1115,
-                                          int channel, const String& name,
-                                          const String& sk_id, int sort_order,
-                                          bool enable_signalk_output = true);
+sensesp::FloatProducer* ConnectAnalogInput(Adafruit_ADS1115* ads1115,
+                                           int channel, const String& name,
+                                           const String& sk_id, int sort_order,
+                                           bool enable_signalk_output = true);
 
 class ADS1115VoltageInput : public sensesp::FloatSensor {
  public:
