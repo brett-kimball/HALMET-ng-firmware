@@ -183,10 +183,10 @@ if (!global_sk_enable) {
 
   ///////////////////////////////////////////////////////////////////
   // Analog inputs
-  auto a01 = ConnectAnalogInput(ads1115, 0, "A01", "a01", 3000);
-  auto a02 = ConnectAnalogInput(ads1115, 1, "A02", "a02", 3010);
-  auto a03 = ConnectAnalogInput(ads1115, 2, "A03", "a03", 3020);
-  auto a04 = ConnectAnalogInput(ads1115, 3, "A04", "a04", 3030);
+  auto a01 = ConnectAnalogInput(ads1115, 0, "A01", "a01", 2010);
+  auto a02 = ConnectAnalogInput(ads1115, 1, "A02", "a02", 2020);
+  auto a03 = ConnectAnalogInput(ads1115, 2, "A03", "a03", 2030);
+  auto a04 = ConnectAnalogInput(ads1115, 3, "A04", "a04", 2040);
 
 #ifdef ENABLE_NMEA2000_OUTPUT
   // Tank 1, instance 0. Capacity 200 liters. You can change the capacity
