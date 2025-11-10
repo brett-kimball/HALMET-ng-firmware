@@ -17,6 +17,7 @@
 #include "sensesp/transforms/lambda_transform.h"
 #include "sensesp/transforms/linear.h"
 #include "sensesp/ui/config_item.h"
+#include "sensesp/ui/status_page_item.h"
 #include "sensesp_app_builder.h"
 #define BUILDER_CLASS SensESPAppBuilder
 
@@ -29,6 +30,7 @@
 #include "sensesp/net/http_server.h"
 #include "sensesp/net/networking.h"
 #include "SPIFFS.h"
+#include "sensesp/system/observablevalue.h"
 
 using namespace sensesp;
 using namespace halmet;
@@ -102,6 +104,9 @@ extern int ais_msg_count;
 
 // Raw sensor values for calibration status
 std::map<std::string, float> raw_sensor_values;
+
+// Status page items for displaying raw sensor values on web UI
+std::map<std::string, StatusPageItem*> raw_sensor_status_items;
 
 // --------------------------------------------------------------------
 // ADS1115 GAIN CONFIGURATION
@@ -361,6 +366,24 @@ void setup() {
   }
 
   // --------------------------------------------------------------------
+  // 6b. Raw sensor value status display (web UI)
+  // --------------------------------------------------------------------
+  // Display raw sensor values on the web UI status screen when calibration
+  // mode is enabled. This allows users to see the uncalibrated electrical
+  // signals from their sensors for troubleshooting and calibration.
+  
+  if (enable_calibration) {
+    // Create StatusPageItem objects for each raw sensor value
+    for (const auto& pair : raw_sensor_values) {
+      const std::string& sensor_id = pair.first;
+      float initial_value = pair.second;
+      
+      auto* status_item = new StatusPageItem(sensor_id.c_str(), initial_value);
+      raw_sensor_status_items[sensor_id] = status_item;
+    }
+  }
+
+  // --------------------------------------------------------------------
   // 7. Digital alarm inputs
   // --------------------------------------------------------------------
   auto d03 = ConnectAlarmSender(kDigitalInputPin3, "D3");
@@ -498,11 +521,60 @@ void setup() {
   ConfigItem(trim_tab_sender)
       ->set_title("Trim Tabs NMEA 2000")
       ->set_sort_order(3006);
+  // Note: Both port and starboard trim tabs use the same sensor value (A02)
+  // since they are fused together on this vessel
   a02->connect_to(&trim_tab_sender->trim_deg_port_);
   a02->connect_to(&trim_tab_sender->trim_deg_stbd_);
 
+  // --------------------------------------------------------------------
+  // 12. NMEA 2000 Heading & Attitude
+  // --------------------------------------------------------------------
+  if (bno055) {
+    N2kHeadingSender* heading_sender = new N2kHeadingSender("/NMEA 2000/Heading", 0, nmea2000);
+    ConfigItem(heading_sender)
+        ->set_title("Heading NMEA 2000")
+        ->set_sort_order(3007);
+    heading_sensor->connect_to(&heading_sender->heading_deg_);
+
+    N2kAttitudeSender* attitude_sender = new N2kAttitudeSender("/NMEA 2000/Attitude", 0, nmea2000);
+    ConfigItem(attitude_sender)
+        ->set_title("Attitude NMEA 2000")
+        ->set_sort_order(3008);
+    pitch_sensor->connect_to(&attitude_sender->pitch_deg_);
+    roll_sensor->connect_to(&attitude_sender->roll_deg_);
+  }
+
+  // --------------------------------------------------------------------
+  // 13. NMEA 2000 Transmission Parameters
+  // --------------------------------------------------------------------
+  N2kTransmissionSender* transmission_1_sender = new N2kTransmissionSender("/NMEA 2000/Transmission 1", 0, nmea2000);
+  ConfigItem(transmission_1_sender)
+      ->set_title("Transmission 1 NMEA 2000")
+      ->set_sort_order(3009);
+  // Convert float gear position to NMEA 2000 gear code
+  a03->connect_to(
+    new sensesp::LambdaTransform<float, int>([](float gear_pos) {
+      if (gear_pos < 0.25f) return 0;  // Reverse
+      else if (gear_pos < 0.75f) return 1;  // Neutral
+      else return 2;  // Forward
+    })
+  )->connect_to(&transmission_1_sender->gear_);
+
+  N2kTransmissionSender* transmission_2_sender = new N2kTransmissionSender("/NMEA 2000/Transmission 2", 1, nmea2000);
+  ConfigItem(transmission_2_sender)
+      ->set_title("Transmission 2 NMEA 2000")
+      ->set_sort_order(3010);
+  // Convert float gear position to NMEA 2000 gear code
+  a04->connect_to(
+    new sensesp::LambdaTransform<float, int>([](float gear_pos) {
+      if (gear_pos < 0.25f) return 0;  // Reverse
+      else if (gear_pos < 0.75f) return 1;  // Neutral
+      else return 2;  // Forward
+    })
+  )->connect_to(&transmission_2_sender->gear_);
+
   // ========================================================================
-  // 13. OLED — WORKS WITH OR WITHOUT OLED, !!STATIC OR BUST!!
+  // 14. OLED — WORKS WITH OR WITHOUT OLED, !!STATIC OR BUST!!
   // ========================================================================
 if (display_present && display) {
 // === ROW 0: WiFi Status / IP Address / AIS (rotates every 5 seconds) ===
