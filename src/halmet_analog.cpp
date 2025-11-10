@@ -13,24 +13,10 @@
 extern std::map<std::string, float> raw_sensor_values;
 
 // Status page items for displaying raw sensor values on web UI
-extern std::map<std::string, sensesp::StatusPageItem<float>*> raw_sensor_status_items;
+extern std::map<std::string, halmet::CalibrationStatusPageItem<float>*> raw_sensor_status_items;
 
-class RawValueConsumer : public sensesp::ValueConsumer<float> {
- public:
-  RawValueConsumer(const char* id) : id_(id) {}
-  void set_input(float input, uint8_t input_channel = 0) {
-    raw_sensor_values[id_] = input;
-    // Update status page item if it exists and calibration is enabled
-    if (halmet::g_enable_calibration) {
-      auto it = raw_sensor_status_items.find(id_);
-      if (it != raw_sensor_status_items.end()) {
-        it->second->set(input);
-      }
-    }
-  }
- private:
-  std::string id_;
-};
+// Raw sensor value producers for calibration mode
+// extern std::map<std::string, sensesp::ObservableValue<float>*> raw_sensor_producers;
 
 namespace halmet {
 
@@ -203,9 +189,18 @@ sensesp::FloatProducer* ConnectAnalogSender(
       }
   );
 
-  // Update raw sensor values for status display
+  // Update raw sensor values for status display and create StatusPageItem
   if (g_enable_calibration) {
-    sensor->connect_to(new RawValueConsumer(hardware_id.c_str()));
+    // Create StatusPageItem and connect it directly to the sensor
+    auto* status_item = new CalibrationStatusPageItem<float>(
+        hardware_id.c_str(), 0.0f, "Calibration", 4000 + sort_order % 100
+    );
+    sensor->connect_to(status_item);
+    
+    // Store in global map for reference
+    raw_sensor_status_items[hardware_id.c_str()] = status_item;
+    
+    sensor->connect_to(new halmet::RawValueConsumer(hardware_id.c_str()));
   }
 
   // Raw output

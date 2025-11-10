@@ -2,8 +2,12 @@
 #define HALMET_ANALOG_H_
 
 #include <Adafruit_ADS1X15.h>
+#include <map>
+#include <string>
 
 #include "sensesp/sensors/sensor.h"
+#include "sensesp/system/valueconsumer.h"
+#include "sensesp/ui/status_page_item.h"
 #include "sensesp_base_app.h"
 
 namespace halmet {
@@ -12,6 +16,43 @@ namespace halmet {
 // GLOBAL CONFIG
 // ========================================================================
 extern bool g_enable_calibration;
+
+// ========================================================================
+// EXTERNAL DECLARATIONS FOR GLOBAL MAPS
+// ========================================================================
+extern std::map<std::string, float> raw_sensor_values;
+
+// ========================================================================
+// CALIBRATION STATUS PAGE ITEM
+// ========================================================================
+// Custom StatusPageItem that only shows in web UI when calibration is enabled
+template <typename T>
+class CalibrationStatusPageItem : public sensesp::StatusPageItem<T> {
+ public:
+  CalibrationStatusPageItem(String name, const T& value, String group, int order)
+      : sensesp::StatusPageItem<T>(name, value, group, order) {}
+
+ protected:
+  virtual JsonDocument as_json() override {
+    // Only return JSON data if calibration mode is enabled
+    if (halmet::g_enable_calibration) {
+      JsonDocument obj;
+      obj["name"] = this->name_;
+      obj["value"] = this->get();
+      obj["group"] = this->group_;
+      obj["order"] = this->order_;
+      return obj;
+    } else {
+      // Return empty JSON when calibration is disabled
+      return JsonDocument();
+    }
+  }
+};
+
+// ========================================================================
+// EXTERNAL DECLARATIONS FOR GLOBAL MAPS (continued)
+// ========================================================================
+extern std::map<std::string, CalibrationStatusPageItem<float>*> raw_sensor_status_items;
 
 // ========================================================================
 // ANALOG SENSOR TYPES
@@ -221,6 +262,27 @@ inline const String ConfigSchema(const ADS1115VoltageInput& obj) {
 inline const bool ConfigRequiresRestart(const ADS1115VoltageInput& obj) {
   return true;
 }
+
+class RawValueConsumer : public sensesp::ValueConsumer<float> {
+ public:
+  RawValueConsumer(const char* id) : id_(id) {}
+  void set_input(float input, uint8_t input_channel = 0) {
+    // Update global raw_sensor_values map
+    raw_sensor_values[id_] = input;
+    // Update status page item if it exists and calibration is enabled
+    if (g_enable_calibration) {
+      auto it = raw_sensor_status_items.find(id_);
+      if (it != raw_sensor_status_items.end()) {
+        debugD("Updating StatusPageItem for sensor %s with value %f", id_.c_str(), input);
+        it->second->set(input);
+      } else {
+        debugW("StatusPageItem not found for sensor %s", id_.c_str());
+      }
+    }
+  }
+ private:
+  std::string id_;
+};
 
 }  // namespace halmet
 

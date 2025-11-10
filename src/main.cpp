@@ -88,7 +88,7 @@ const String ConfigSchema(const BoolConfig& obj) {
   })###";
 }
 
-} // namespace sensesp
+}  // namespace sensesp
 
 // ========================================================================
 // GLOBAL VARIABLES
@@ -107,10 +107,12 @@ bool ais_silent = false;
 extern int ais_msg_count;
 
 // Raw sensor values for calibration status
+namespace halmet {
 std::map<std::string, float> raw_sensor_values;
 
 // Status page items for displaying raw sensor values on web UI
-std::map<std::string, sensesp::StatusPageItem<float>*> raw_sensor_status_items;
+std::map<std::string, CalibrationStatusPageItem<float>*> raw_sensor_status_items;
+}
 
 // ========================================================================
 // SETUP FUNCTION
@@ -131,9 +133,8 @@ void setup() {
   // ------------------------------------------------------------------
   // SPIFFS Cleanup / Format helpers (INACTIVE by default)
   // ------------------------------------------------------------------
-  // This block implements two guarded, one-shot maintenance actions that
-  // you can enable temporarily when you need to remove old persisted
-  // configuration files or fully reformat SPIFFS on a device.
+  // See docs/cleanup-and-session.md for detailed usage instructions.
+  // This code implements compile-time guarded SPIFFS maintenance actions.
   //
   // Available compile-time flags (do NOT enable these in normal builds):
   //
@@ -312,9 +313,42 @@ void setup() {
       ->set_description("Enable raw Signal K paths for calibration")
       ->set_sort_order(102);
 
+  // Load the saved calibration mode setting
+  enable_calibration_config->load();
+
   bool enable_calibration = enable_calibration_config->value;
 
   halmet::g_enable_calibration = enable_calibration;
+  
+  debugI("Calibration mode setting: %s (value=%d)", enable_calibration ? "ENABLED" : "DISABLED", enable_calibration);
+
+  // Initialize raw sensor values map with default values for all sensors
+  halmet::raw_sensor_values["a01"] = 0.0f;  // RUDDER ANGLE
+  halmet::raw_sensor_values["a02"] = 0.0f;  // CRUISE CONTROL ANGLE
+  halmet::raw_sensor_values["a03"] = 0.0f;  // TRANSMISSION GEAR PORT
+  halmet::raw_sensor_values["a04"] = 0.0f;  // TRANSMISSION GEAR STBD
+  
+  // Optional sensors (ADS1115 #1)
+  if (ads1115_1_present) {
+    halmet::raw_sensor_values["a11"] = 0.0f;  // PRESSURE PORT
+    halmet::raw_sensor_values["a12"] = 0.0f;  // TEMPERATURE PORT
+    halmet::raw_sensor_values["a13"] = 0.0f;  // PRESSURE STBD
+    halmet::raw_sensor_values["a14"] = 0.0f;  // TEMPERATURE STBD
+  }
+  
+  // Digital inputs for calibration
+  halmet::raw_sensor_values["d03"] = 0.0f;  // DIGITAL INPUT D3
+  halmet::raw_sensor_values["d04"] = 0.0f;  // DIGITAL INPUT D4
+
+  // --------------------------------------------------------------------
+  // Raw sensor value status display (web UI)
+  // --------------------------------------------------------------------
+  // StatusPageItem objects are now created in ConnectAnalogSender when calibration is enabled
+  // and connected directly to sensor producers
+  
+  // Debug: Log total number of status page items
+  auto all_status_items = sensesp::StatusPageItemBase::get_status_page_items();
+  debugI("Total status page items registered: %d", all_status_items->size());
 
   // RUDDER ANGLE — ACTIVE MODE
   auto* a01 = ConnectAnalogSender(
@@ -341,39 +375,22 @@ void setup() {
   ValueProducer<float>* a14 = nullptr;
 
   if (ads1115_1_present) {
+    // PORT OIL PRESSURE - PASSIVE MODE
     a11 = ConnectAnalogSender(
         ads1115_1, 0, PRESSURE, "port", "a11", 3020, true, enable_calibration
     );
+    // PORT TEMPERATURE - PASSIVE MODE
     a12 = ConnectAnalogSender(
         ads1115_1, 1, TEMPERATURE, "port", "a12", 3025, true, enable_calibration
     );
+    // STBD OIL PRESSURE - PASSIVE MODE
     a13 = ConnectAnalogSender(
         ads1115_1, 2, PRESSURE, "stbd", "a13", 3030, true, enable_calibration
     );
+    // STBD TEMPERATURE - PASSIVE MODE
     a14 = ConnectAnalogSender(
         ads1115_1, 3, TEMPERATURE, "stbd", "a14", 3035, true, enable_calibration
     );
-  }
-
-  // --------------------------------------------------------------------
-  // Raw sensor value status display (web UI)
-  // --------------------------------------------------------------------
-  // Display raw sensor values on the web UI status screen when calibration
-  // mode is enabled. This allows users to see the uncalibrated electrical
-  // signals from their sensors for troubleshooting and calibration.
-  
-  if (enable_calibration) {
-    // Create StatusPageItem objects for each raw sensor value
-    int order = 4000;
-    for (const auto& pair : raw_sensor_values) {
-      const std::string& sensor_id = pair.first;
-      float initial_value = pair.second;
-      
-      auto* status_item = new sensesp::StatusPageItem<float>(
-          sensor_id.c_str(), initial_value, "Calibration", order++
-      );
-      raw_sensor_status_items[sensor_id] = status_item;
-    }
   }
 
   // --------------------------------------------------------------------
@@ -577,9 +594,19 @@ event_loop()->onRepeat(5000, []() {
     if (display_state == 0) {
       // SSID + signal
       String ssid = WiFi.SSID();
-      ssid.replace("°", ".");
+      // Replace degree symbol and filter out non-ASCII characters
+      ssid.replace("°", "o");
+      // Replace any remaining non-ASCII characters with safe alternatives
+      String clean_ssid = "";
+      for (char c : ssid) {
+        if (c >= 32 && c <= 126) {  // printable ASCII range
+          clean_ssid += c;
+        } else {
+          clean_ssid += '?';  // replace non-ASCII with ?
+        }
+      }
       String signal = String(WiFi.RSSI()) + "dBm";
-      PrintValue(display, 0, ssid, signal, "");
+      PrintValue(display, 0, clean_ssid, signal, "");
     } else if (display_state == 1) {
       // IP address
       String ip = WiFi.localIP().toString();
@@ -712,14 +739,14 @@ event_loop()->onRepeat(1000, []() {
   if (heading_sensor) {
     static String heading_str = "---";
     auto update_heading = [&]() {
-      PrintValue(display, 7, "HDG", heading_str, "");
+      PrintValue(display, 7, "Hdg", heading_str, "");
     };
     heading_sensor->connect_to(new LambdaConsumer<float>([&](float v) {
       heading_str = String((int)v);
       update_heading();
     }));
   } else {
-    PrintValue(display, 7, "HDG", "---", "");
+    PrintValue(display, 7, "Hdg", "---", "");
   }
 }
 

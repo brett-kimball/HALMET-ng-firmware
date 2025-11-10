@@ -5,7 +5,11 @@
 
 using namespace sensesp;
 
+namespace halmet {
+
 FloatProducer* ConnectTachoSender(int pin, String name);
 BoolProducer* ConnectAlarmSender(int pin, String name);
+
+}  // namespace halmet
 
 #endif

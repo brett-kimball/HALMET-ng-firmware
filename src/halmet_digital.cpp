@@ -1,15 +1,19 @@
 #include "halmet_digital.h"
+#include "halmet_analog.h"
 
 #include "sensesp/sensors/digital_input.h"
 #include "sensesp/sensors/sensor.h"
 #include "sensesp/signalk/signalk_output.h"
 #include "sensesp/transforms/frequency.h"
+#include "sensesp/transforms/lambda_transform.h"
 #include "sensesp/ui/config_item.h"
 
 using namespace sensesp;
 
 // Default: 1 pulse per revolution
 const float kDefaultPulsesPerRev = 1.0;
+
+namespace halmet {
 
 FloatProducer* ConnectTachoSender(int pin, String name) {
   char config_path[80];
@@ -83,5 +87,36 @@ BoolProducer* ConnectAlarmSender(int pin, String name) {
   alarm_input->connect_to(sk_out);
 #endif
 
+  // Create raw value consumer for calibration mode
+  if (g_enable_calibration) {
+    // Convert boolean to float for calibration display
+    auto* bool_to_float = new sensesp::LambdaTransform<bool, float>(
+        [](bool value) { return value ? 1.0f : 0.0f; }
+    );
+    alarm_input->connect_to(bool_to_float);
+    
+    // Create StatusPageItem and connect it to the float converter
+    auto* status_item = new CalibrationStatusPageItem<float>(
+        name.c_str(), 0.0f, "Calibration", 4100
+    );
+    bool_to_float->connect_to(status_item);
+    
+    // Store in global map for reference
+    raw_sensor_status_items[name.c_str()] = status_item;
+    
+    bool_to_float->connect_to(new RawValueConsumer(name.c_str()));
+    
+    // Also create raw SignalK output for digital inputs in calibration mode
+    char raw_sk_path[80];
+    snprintf(raw_sk_path, sizeof(raw_sk_path), "sensors.%s", name.c_str());
+    auto* raw_sk_out = new sensesp::SKOutputFloat(
+        raw_sk_path, "",
+        new sensesp::SKMetadata("ratio", String(name.c_str()) + " Digital Input Raw")
+    );
+    bool_to_float->connect_to(raw_sk_out);
+  }
+
   return alarm_input;
 }
+
+}  // namespace halmet
