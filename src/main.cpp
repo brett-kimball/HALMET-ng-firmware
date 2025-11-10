@@ -210,26 +210,6 @@ void setup() {
   } else {
     Serial.println("ERROR: SPIFFS.begin() failed for cleanup");
   }
-#else
-  const char* cleanup_marker = "/persist_cleanup_done";
-  if (SPIFFS.begin(true) && !SPIFFS.exists(cleanup_marker)) {
-    Serial.println("persist_cleanup_done marker not found — performing one-shot SPIFFS cleanup");
-    File root = SPIFFS.open("/");
-    if (root) {
-      File file = root.openNextFile();
-      while (file) {
-        String name = String(file.name());
-        if (name != "/www") {
-          Serial.printf("Removing SPIFFS file: %s\n", name.c_str());
-          SPIFFS.remove(name);
-        }
-        file = root.openNextFile();
-      }
-      root.close();
-    }
-    File mf = SPIFFS.open(cleanup_marker, FILE_WRITE);
-    if (mf) { mf.printf("done\n"); mf.close(); Serial.println("persist_cleanup_done marker written"); }
-  }
 #endif
 
   // One-shot SPIFFS FORMAT (destructive) - formats the filesystem completely

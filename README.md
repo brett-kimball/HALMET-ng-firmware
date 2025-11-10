@@ -13,7 +13,6 @@ Parts intended to be customized are marked with `EDIT:` comments.
 
 The firmware includes built-in SPIFFS cleanup functionality for maintenance:
 
-- **Automatic cleanup**: Runs once on first boot to remove old configuration files
 - **Manual cleanup**: Enable `FORCE_SPIFFS_CLEANUP` in `platformio.ini` for file-by-file cleanup
 - **Full format**: Enable `FORCE_SPIFFS_FORMAT` in `platformio.ini` for complete SPIFFS wipe
 
