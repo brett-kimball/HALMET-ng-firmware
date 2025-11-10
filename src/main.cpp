@@ -35,7 +35,7 @@
 using namespace sensesp;
 using namespace halmet;
 
-// Simple boolean config class
+// Simple boolean config class for calibration mode toggle
 class BoolConfig : public sensesp::FileSystemSaveable {
  public:
   BoolConfig(String config_path, bool default_value = true)
@@ -43,6 +43,7 @@ class BoolConfig : public sensesp::FileSystemSaveable {
 
   bool value;
 
+  // Deserialize from JSON (used for loading saved configuration)
   virtual bool from_json(const JsonObject& config) override {
     if (config["value"].is<bool>()) {
       value = config["value"];
@@ -50,11 +51,13 @@ class BoolConfig : public sensesp::FileSystemSaveable {
     return true;
   }
 
+  // Serialize to JSON (used for saving configuration)
   virtual bool to_json(JsonObject& config) override {
     config["value"] = value;
     return true;
   }
 
+  // JSON schema for web UI configuration form
   const String ConfigSchema(const BoolConfig& obj) {
     return R"###({
       "type": "object",
@@ -69,6 +72,7 @@ class BoolConfig : public sensesp::FileSystemSaveable {
   }
 };
 
+// Global ConfigSchema function for SensESP template system
 namespace sensesp {
 
 const String ConfigSchema(const BoolConfig& obj) {
@@ -106,21 +110,7 @@ extern int ais_msg_count;
 std::map<std::string, float> raw_sensor_values;
 
 // Status page items for displaying raw sensor values on web UI
-std::map<std::string, StatusPageItem*> raw_sensor_status_items;
-
-// --------------------------------------------------------------------
-// ADS1115 GAIN CONFIGURATION
-// --------------------------------------------------------------------
-const adsGain_t kADS1115Gain = GAIN_ONE;
-
-// ========================================================================
-// TEST OUTPUT PIN CONFIGURATION
-// ========================================================================
-#define ENABLE_TEST_OUTPUT_PIN
-#ifdef ENABLE_TEST_OUTPUT_PIN
-const int kTestOutputPin = GPIO_NUM_33;
-const int kTestOutputFrequency = 380;
-#endif
+std::map<std::string, sensesp::StatusPageItem<float>*> raw_sensor_status_items;
 
 // ========================================================================
 // SETUP FUNCTION
@@ -130,7 +120,7 @@ void setup() {
   Serial.begin(115200);
 
   // --------------------------------------------------------------------
-  // 1. Initialize the application framework
+  // Initialize the application framework
   // --------------------------------------------------------------------
   BUILDER_CLASS builder;
   sensesp_app = (&builder)
@@ -234,13 +224,13 @@ void setup() {
 #endif
 
   // --------------------------------------------------------------------
-  // 2. Initialize the I2C bus
+  // Initialize the I2C bus
   // --------------------------------------------------------------------
   i2c = &Wire;
   Wire.begin(kSDAPin, kSCLPin);
 
   // --------------------------------------------------------------------
-  // 3. Initialize ADS1115s — AUTO-DETECT SECOND CHIP
+  // Initialize ADS1115s — AUTO-DETECT SECOND CHIP
   // --------------------------------------------------------------------
   auto ads1115_0 = new Adafruit_ADS1115();
   ads1115_0->setGain(kADS1115Gain);
@@ -260,9 +250,9 @@ void setup() {
   }
 
   // --------------------------------------------------------------------
-  // 3b. Initialize BNO055 Compass
+  // Initialize BNO055 Compass
   // --------------------------------------------------------------------
-  bno055 = new Adafruit_BNO055(55, 0x28);  // Placeholder address 0x28
+  bno055 = new Adafruit_BNO055(55, kBNO055Address);  // BNO055 I2C address
   if (bno055->begin()) {
     debugD("BNO055 (0x28) OK");
   } else {
@@ -278,7 +268,7 @@ void setup() {
 #endif
 
   // --------------------------------------------------------------------
-  // 4. Initialize NMEA 2000 & AIS functionality
+  // Initialize NMEA 2000 & AIS functionality
   // --------------------------------------------------------------------
   nmea2000 = new tNMEA2000_esp32(kCANTxPin, kCANRxPin);
   nmea2000->SetN2kCANSendFrameBufSize(250);
@@ -309,12 +299,12 @@ void setup() {
   // AISSendCommand("$PSRT,TRG,02,00"); // disable silent mode
 
   // --------------------------------------------------------------------
-  // 5. Initialize the OLED display
+  // Initialize the OLED display
   // --------------------------------------------------------------------
   bool display_present = InitializeSSD1306(sensesp_app.get(), &display, i2c);  
 
   // --------------------------------------------------------------------
-  // 6. Analog inputs
+  // Analog inputs
   // --------------------------------------------------------------------
   auto enable_calibration_config = new BoolConfig("/Enable Calibration", true);
   ConfigItem(enable_calibration_config)
@@ -366,7 +356,7 @@ void setup() {
   }
 
   // --------------------------------------------------------------------
-  // 6b. Raw sensor value status display (web UI)
+  // Raw sensor value status display (web UI)
   // --------------------------------------------------------------------
   // Display raw sensor values on the web UI status screen when calibration
   // mode is enabled. This allows users to see the uncalibrated electrical
@@ -374,17 +364,20 @@ void setup() {
   
   if (enable_calibration) {
     // Create StatusPageItem objects for each raw sensor value
+    int order = 4000;
     for (const auto& pair : raw_sensor_values) {
       const std::string& sensor_id = pair.first;
       float initial_value = pair.second;
       
-      auto* status_item = new StatusPageItem(sensor_id.c_str(), initial_value);
+      auto* status_item = new sensesp::StatusPageItem<float>(
+          sensor_id.c_str(), initial_value, "Calibration", order++
+      );
       raw_sensor_status_items[sensor_id] = status_item;
     }
   }
 
   // --------------------------------------------------------------------
-  // 7. Digital alarm inputs
+  // Digital alarm inputs
   // --------------------------------------------------------------------
   auto d03 = ConnectAlarmSender(kDigitalInputPin3, "D3");
   auto d04 = ConnectAlarmSender(kDigitalInputPin4, "D4");
@@ -397,7 +390,7 @@ void setup() {
   );
 
   // --------------------------------------------------------------------
-  // 7b. Compass (BNO055)
+  // Compass (BNO055)
   // --------------------------------------------------------------------
   ValueProducer<float>* heading_sensor = nullptr;
   ValueProducer<float>* pitch_sensor = nullptr;
@@ -430,7 +423,7 @@ void setup() {
   }
 
   // --------------------------------------------------------------------
-  // 8. NMEA 2000 Engine Dynamic Senders
+  // NMEA 2000 Engine Dynamic Senders
   // --------------------------------------------------------------------
   N2kEngineParameterDynamicSender* engine_1_dynamic_sender =
       new N2kEngineParameterDynamicSender("/NMEA 2000/Engine 1 Dynamic", 0, nmea2000);
@@ -484,7 +477,7 @@ void setup() {
   d04->connect_to(engine_2_dynamic_sender->low_oil_pressure_);
 
   // --------------------------------------------------------------------
-  // 9. Digital tacho inputs
+  // Digital tacho inputs
   // --------------------------------------------------------------------
   auto d01 = ConnectTachoSender(kDigitalInputPin1, "port");
   auto d02 = ConnectTachoSender(kDigitalInputPin2, "stbd");
@@ -515,7 +508,7 @@ void setup() {
   a01->connect_to(&rudder_sender->rudder_angle_deg_);
 
   // --------------------------------------------------------------------
-  // 11. NMEA 2000 Trim Tabs
+  // NMEA 2000 Trim Tabs
   // --------------------------------------------------------------------
   N2kTrimTabSender* trim_tab_sender = new N2kTrimTabSender("/NMEA 2000/Trim Tabs", nmea2000);
   ConfigItem(trim_tab_sender)
@@ -527,25 +520,25 @@ void setup() {
   a02->connect_to(&trim_tab_sender->trim_deg_stbd_);
 
   // --------------------------------------------------------------------
-  // 12. NMEA 2000 Heading & Attitude
+  // NMEA 2000 Heading & Attitude
   // --------------------------------------------------------------------
   if (bno055) {
-    N2kHeadingSender* heading_sender = new N2kHeadingSender("/NMEA 2000/Heading", 0, nmea2000);
+    N2kHeadingSender* heading_sender = new N2kHeadingSender("/NMEA 2000/Heading", nmea2000);
     ConfigItem(heading_sender)
         ->set_title("Heading NMEA 2000")
         ->set_sort_order(3007);
-    heading_sensor->connect_to(&heading_sender->heading_deg_);
+    heading_sensor->connect_to(&heading_sender->heading_);
 
-    N2kAttitudeSender* attitude_sender = new N2kAttitudeSender("/NMEA 2000/Attitude", 0, nmea2000);
+    N2kAttitudeSender* attitude_sender = new N2kAttitudeSender("/NMEA 2000/Attitude", nmea2000);
     ConfigItem(attitude_sender)
         ->set_title("Attitude NMEA 2000")
         ->set_sort_order(3008);
-    pitch_sensor->connect_to(&attitude_sender->pitch_deg_);
-    roll_sensor->connect_to(&attitude_sender->roll_deg_);
+    pitch_sensor->connect_to(&attitude_sender->pitch_);
+    roll_sensor->connect_to(&attitude_sender->roll_);
   }
 
   // --------------------------------------------------------------------
-  // 13. NMEA 2000 Transmission Parameters
+  // NMEA 2000 Transmission Parameters
   // --------------------------------------------------------------------
   N2kTransmissionSender* transmission_1_sender = new N2kTransmissionSender("/NMEA 2000/Transmission 1", 0, nmea2000);
   ConfigItem(transmission_1_sender)
@@ -574,7 +567,7 @@ void setup() {
   )->connect_to(&transmission_2_sender->gear_);
 
   // ========================================================================
-  // 14. OLED — WORKS WITH OR WITHOUT OLED, !!STATIC OR BUST!!
+  // OLED — WORKS WITH OR WITHOUT OLED, !!STATIC OR BUST!!
   // ========================================================================
 if (display_present && display) {
 // === ROW 0: WiFi Status / IP Address / AIS (rotates every 5 seconds) ===

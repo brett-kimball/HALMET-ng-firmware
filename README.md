@@ -18,18 +18,18 @@ To get started, follow the generic SensESP [Getting Started](https://signalk.org
 
 **Engine Monitoring (Twin Engines):**
 - RPM inputs (D1, D2)
+- Low oil pressure alarms (D3, D4)
 - Oil pressure sensors (A11, A13)
 - Coolant temperature sensors (A12, A14)
-- Low oil pressure alarms (D3, D4)
 
 **Navigation & Control:**
 - Rudder angle (A01)
 - Trim tabs (A02)
-- Transmission gear (A03,A04)
+- Transmission gear (A03, A04)
 - BNO055 compass/attitude sensor
 
 **Communications:**
-- AIS Gateway (Serial2)
+- AIS Transceiver (Serial2)
 - NMEA 2000 output
 
 ## NMEA 2000 PGNs

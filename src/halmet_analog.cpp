@@ -9,13 +9,24 @@
 #include "sensesp/transforms/curveinterpolator.h"
 #include "sensesp/transforms/lambda_transform.h"
 #include "sensesp/ui/config_item.h"
+#include "sensesp/ui/status_page_item.h"
 extern std::map<std::string, float> raw_sensor_values;
+
+// Status page items for displaying raw sensor values on web UI
+extern std::map<std::string, sensesp::StatusPageItem<float>*> raw_sensor_status_items;
 
 class RawValueConsumer : public sensesp::ValueConsumer<float> {
  public:
   RawValueConsumer(const char* id) : id_(id) {}
   void set_input(float input, uint8_t input_channel = 0) {
     raw_sensor_values[id_] = input;
+    // Update status page item if it exists and calibration is enabled
+    if (halmet::g_enable_calibration) {
+      auto it = raw_sensor_status_items.find(id_);
+      if (it != raw_sensor_status_items.end()) {
+        it->second->set(input);
+      }
+    }
   }
  private:
   std::string id_;
