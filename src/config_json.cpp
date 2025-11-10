@@ -71,6 +71,38 @@ String halmet_config::get_merged_config_string() {
     merge(dout.as<JsonVariant>(), dover.as<JsonVariant>());
   }
 
+  // If overrides include calibration_raw entries, copy them through into the
+  // merged output under the corresponding inputs.<id>.calibration_raw so the
+  // web editor can show the raw (comment-preserving) text. Note: serializeJson
+  // will still not emit comments from structured objects; calibration_raw is a
+  // separate string that holds the user's original text.
+  if (!dover.isNull()) {
+    if (dover.as<JsonVariant>().is<JsonObject>()) {
+      JsonObject dover_root = dover.as<JsonObject>();
+      if (dover_root.containsKey("inputs")) {
+        JsonObject dov_inputs = dover_root["inputs"].as<JsonObject>();
+        JsonObject out_root = dout.as<JsonObject>();
+        JsonObject out_inputs = out_root.containsKey("inputs") ? out_root["inputs"].as<JsonObject>() : out_root.createNestedObject("inputs");
+        for (JsonPair kv : dov_inputs) {
+          const char* iname = kv.key().c_str();
+          JsonObject src_in = kv.value().as<JsonObject>();
+          if (src_in.containsKey("calibration_raw")) {
+            // copy calibration_raw as string into merged outputs. If the source
+            // value is null, write an empty string instead of JSON null so the
+            // UI editors see an empty value rather than null.
+            JsonObject out_in = out_inputs.containsKey(iname) ? out_inputs[iname].as<JsonObject>() : out_inputs.createNestedObject(iname);
+            if (src_in["calibration_raw"].isNull()) {
+              out_in["calibration_raw"] = "";
+            } else {
+              const char* sval = src_in["calibration_raw"].as<const char*>();
+              out_in["calibration_raw"] = sval ? sval : "";
+            }
+          }
+        }
+      }
+    }
+  }
+
   String out;
   serializeJson(dout, out);
   return out;
@@ -126,6 +158,7 @@ bool halmet_config::set_input_calibration(const String& input_id, const String& 
     if (inputs.containsKey(input_id.c_str())) {
       JsonObject in = inputs[input_id.c_str()].as<JsonObject>();
       if (in.containsKey("calibration")) in.remove("calibration");
+      if (in.containsKey("calibration_raw")) in.remove("calibration_raw");
     }
   } else {
     // parse sub-object
@@ -139,6 +172,37 @@ bool halmet_config::set_input_calibration(const String& input_id, const String& 
     JsonObject in = inputs.containsKey(input_id.c_str()) ? inputs[input_id.c_str()].as<JsonObject>() : inputs.createNestedObject(input_id.c_str());
     in.remove("calibration");
     in.createNestedObject("calibration").set(vsub);
+    // Also store the raw text without modification under calibration_raw so
+    // comments the user included are preserved for round-trip editing.
+    in["calibration_raw"] = json_sub.c_str();
+  }
+
+  // Save doc back
+  String out;
+  serializeJson(doc, out);
+  return save_overrides_from_string(out, error_out);
+}
+
+bool halmet_config::set_input_calibration_raw(const String& input_id, const String& json_raw, String* error_out) {
+  // Load overrides into doc
+  DynamicJsonDocument doc(16 * 1024);
+  if (!load_overrides_into(doc)) {
+    // start fresh
+    doc.clear();
+  }
+
+  JsonObject root = doc.to<JsonObject>();
+  JsonObject inputs = root.containsKey("inputs") ? root["inputs"].as<JsonObject>() : root.createNestedObject("inputs");
+
+  if (json_raw.length() == 0) {
+    // remove calibration_raw for input_id
+    if (inputs.containsKey(input_id.c_str())) {
+      JsonObject in = inputs[input_id.c_str()].as<JsonObject>();
+      if (in.containsKey("calibration_raw")) in.remove("calibration_raw");
+    }
+  } else {
+    JsonObject in = inputs.containsKey(input_id.c_str()) ? inputs[input_id.c_str()].as<JsonObject>() : inputs.createNestedObject(input_id.c_str());
+    in["calibration_raw"] = json_raw.c_str();
   }
 
   // Save doc back

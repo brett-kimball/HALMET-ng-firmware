@@ -1,5 +1,7 @@
 #include "halmet_digital.h"
 
+#include "config_flags.h"
+
 #include "sensesp/sensors/digital_input.h"
 #include "sensesp/sensors/sensor.h"
 #include "sensesp/signalk/signalk_output.h"
@@ -24,10 +26,11 @@ FloatProducer* ConnectTachoSender(int pin, String name) {
            name.c_str());
   auto tacho_input =
       new DigitalInputCounter(pin, INPUT, RISING, 500, config_path);
-
+#if !DISABLE_LEGACY_CONFIG_ITEMS
   ConfigItem(tacho_input)
       ->set_title(config_title)
       ->set_description(config_description);
+#endif
 
   snprintf(config_path, sizeof(config_path), "/Tacho %s/Revolution Multiplier",
            name.c_str());
@@ -36,10 +39,11 @@ FloatProducer* ConnectTachoSender(int pin, String name) {
   snprintf(config_description, sizeof(config_description),
            "Tacho %s Multiplier", name.c_str());
   auto tacho_frequency = new Frequency(kDefaultFrequencyScale, config_path);
-
+#if !DISABLE_LEGACY_CONFIG_ITEMS
   ConfigItem(tacho_frequency)
       ->set_title(config_title)
       ->set_description(config_description);
+#endif
 
   tacho_input->connect_to(tacho_frequency);
 
@@ -53,10 +57,11 @@ FloatProducer* ConnectTachoSender(int pin, String name) {
            "Tacho %s Signal K Path", name.c_str());
 
   auto tacho_frequency_sk_output = new SKOutputFloat(sk_path, config_path);
-
+#if !DISABLE_LEGACY_CONFIG_ITEMS
   ConfigItem(tacho_frequency_sk_output)
       ->set_title(config_title)
       ->set_description(config_description);
+#endif
 
   tacho_frequency->connect_to(tacho_frequency_sk_output);
 #endif

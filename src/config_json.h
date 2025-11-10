@@ -19,6 +19,11 @@ bool save_overrides_from_string(const String& s, String* error_out = nullptr);
 // If json_sub is empty, the calibration override is removed (reverts to defaults).
 bool set_input_calibration(const String& input_id, const String& json_sub, String* error_out = nullptr);
 
+// Set or clear the raw calibration text for an input. This stores the
+// user-provided raw JSON string (including comments) into the overrides
+// under inputs/<id>/calibration_raw. If json_raw is empty, the field is removed.
+bool set_input_calibration_raw(const String& input_id, const String& json_raw, String* error_out = nullptr);
+
 // Read the persisted overrides into dest_doc. Returns true on success.
 bool load_overrides_into(JsonDocument& dest_doc);
 
