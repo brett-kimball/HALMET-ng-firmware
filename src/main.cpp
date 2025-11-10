@@ -1,7 +1,10 @@
 #include <Adafruit_ADS1X15.h>
+#include <Adafruit_BNO055.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
 #include <NMEA2000_esp32.h>
+#include <map>
+#include <string>
 
 #include "n2k_senders.h"
 #include "sensesp/net/discovery.h"
@@ -29,6 +32,57 @@
 using namespace sensesp;
 using namespace halmet;
 
+// Simple boolean config class
+class BoolConfig : public sensesp::FileSystemSaveable {
+ public:
+  BoolConfig(String config_path, bool default_value = true)
+      : sensesp::FileSystemSaveable{config_path}, value{default_value} {}
+
+  bool value;
+
+  virtual bool from_json(const JsonObject& config) override {
+    if (config["value"].is<bool>()) {
+      value = config["value"];
+    }
+    return true;
+  }
+
+  virtual bool to_json(JsonObject& config) override {
+    config["value"] = value;
+    return true;
+  }
+
+  const String ConfigSchema(const BoolConfig& obj) {
+    return R"###({
+      "type": "object",
+      "properties": {
+        "value": {
+          "title": "Enabled",
+          "type": "boolean",
+          "description": "Boolean value"
+        }
+      }
+    })###";
+  }
+};
+
+namespace sensesp {
+
+const String ConfigSchema(const BoolConfig& obj) {
+  return R"###({
+    "type": "object",
+    "properties": {
+      "value": {
+        "title": "Enabled",
+        "type": "boolean",
+        "description": "Boolean value"
+      }
+    }
+  })###";
+}
+
+} // namespace sensesp
+
 // ========================================================================
 // GLOBAL VARIABLES
 // ========================================================================
@@ -38,11 +92,15 @@ elapsedMillis n2k_time_since_tx = 0;
 
 TwoWire* i2c;
 Adafruit_SSD1306* display = nullptr;
+Adafruit_BNO055* bno055 = nullptr;
 
 // Store alarm states in an array for local display output
 bool alarm_states[2] = {false, false};
 bool ais_silent = false;
 extern int ais_msg_count;
+
+// Raw sensor values for calibration status
+std::map<std::string, float> raw_sensor_values;
 
 // --------------------------------------------------------------------
 // ADS1115 GAIN CONFIGURATION
@@ -70,15 +128,15 @@ void setup() {
   // --------------------------------------------------------------------
   BUILDER_CLASS builder;
   sensesp_app = (&builder)
-                    ->set_hostname("halmet1")
+                    ->set_hostname("halmet")
                     ->enable_ota("thisisfine")
                     ->get_app();
 
   // --------------------------------------------------------------------
   // 2. Initialize the I2C bus
   // --------------------------------------------------------------------
-  i2c = new TwoWire(0);
-  i2c->begin(kSDAPin, kSCLPin);
+  i2c = &Wire;
+  Wire.begin(kSDAPin, kSCLPin);
 
   // --------------------------------------------------------------------
   // 3. Initialize ADS1115s — AUTO-DETECT SECOND CHIP
@@ -98,6 +156,18 @@ void setup() {
     debugE("ADS1115_1 NOT FOUND — oil/temp disabled");
     delete ads1115_1;
     ads1115_1 = nullptr;
+  }
+
+  // --------------------------------------------------------------------
+  // 3b. Initialize BNO055 Compass
+  // --------------------------------------------------------------------
+  bno055 = new Adafruit_BNO055(55, 0x28);  // Placeholder address 0x28
+  if (bno055->begin()) {
+    debugD("BNO055 (0x28) OK");
+  } else {
+    debugE("BNO055 NOT FOUND - heading disabled");
+    delete bno055;
+    bno055 = nullptr;
   }
 
 #ifdef ENABLE_TEST_OUTPUT_PIN
@@ -145,61 +215,100 @@ void setup() {
   // --------------------------------------------------------------------
   // 6. Analog inputs
   // --------------------------------------------------------------------
-  bool enable_signalk_output = true;
+  auto enable_calibration_config = new BoolConfig("/Enable Calibration", true);
+  ConfigItem(enable_calibration_config)
+      ->set_title("Enable Calibration Mode")
+      ->set_description("Enable raw Signal K paths for calibration")
+      ->set_sort_order(102);
+
+  bool enable_calibration = enable_calibration_config->value;
+
+  halmet::g_enable_calibration = enable_calibration;
 
   // RUDDER ANGLE — ACTIVE MODE
-  auto* rudder_deg = ConnectRudderAngleSender(
-      ads1115_0, 0, "Rudder", "main", 3000, true
+  auto* a01 = ConnectAnalogSender(
+      ads1115_0, 0, RUDDER_ANGLE, "main", "a01", 3000, true, enable_calibration
   );
 
   // CRUISE CONTROL ANGLE — ACTIVE MODE
-  auto* trim_deg = ConnectTrimAngleSender(
-      ads1115_0, 1, "Cruise Control", "main", 3005, true
+  auto* a02 = ConnectAnalogSender(
+      ads1115_0, 1, TRIM_ANGLE, "main", "a02", 3005, true, enable_calibration
   );
 
-  // Port Transmission
-  auto* port_gear_position = ConnectTransmissionGearSender(
-      ads1115_0, 2, "Port Transmission", "port", 3010, true
+  // TRANSMISSION GEARS - ACTIVE MODE
+  auto* a03 = ConnectAnalogSender(
+      ads1115_0, 2, TRANSMISSION_GEAR, "port", "a03", 3010, true, enable_calibration
   );
-
-  // Stbd Transmission
-  auto* stbd_gear_position = ConnectTransmissionGearSender(
-      ads1115_0, 3, "Stbd Transmission", "stbd", 3015, true
+  auto* a04 = ConnectAnalogSender(
+      ads1115_0, 3, TRANSMISSION_GEAR, "stbd", "a04", 3015, true, enable_calibration
   );
 
   // Optional (ADS1115 #1) — only created if chip exists
-  ValueProducer<float>* port_oil_psi = nullptr;
-  ValueProducer<float>* port_temp_f  = nullptr;
-  ValueProducer<float>* stbd_oil_psi = nullptr;
-  ValueProducer<float>* stbd_temp_f  = nullptr;
+  ValueProducer<float>* a11 = nullptr;
+  ValueProducer<float>* a12 = nullptr;
+  ValueProducer<float>* a13 = nullptr;
+  ValueProducer<float>* a14 = nullptr;
 
   if (ads1115_1_present) {
-    port_oil_psi = ConnectPressureSender(
-        ads1115_1, 0, "Port Oil", "port", 3020, true
+    a11 = ConnectAnalogSender(
+        ads1115_1, 0, PRESSURE, "port", "a11", 3020, true, enable_calibration
     );
-    port_temp_f  = ConnectTemperatureSender(
-        ads1115_1, 1, "Port Coolant", "port", 3025, true
+    a12 = ConnectAnalogSender(
+        ads1115_1, 1, TEMPERATURE, "port", "a12", 3025, true, enable_calibration
     );
-    stbd_oil_psi = ConnectPressureSender(
-        ads1115_1, 2, "Stbd Oil", "stbd", 3030, true
+    a13 = ConnectAnalogSender(
+        ads1115_1, 2, PRESSURE, "stbd", "a13", 3030, true, enable_calibration
     );
-    stbd_temp_f  = ConnectTemperatureSender(
-        ads1115_1, 3, "Stbd Coolant", "stbd", 3035, true
+    a14 = ConnectAnalogSender(
+        ads1115_1, 3, TEMPERATURE, "stbd", "a14", 3035, true, enable_calibration
     );
   }
 
   // --------------------------------------------------------------------
   // 7. Digital alarm inputs
   // --------------------------------------------------------------------
-  auto alarm_d3_input = ConnectAlarmSender(kDigitalInputPin3, "D3");
-  auto alarm_d4_input = ConnectAlarmSender(kDigitalInputPin4, "D4");
+  auto d03 = ConnectAlarmSender(kDigitalInputPin3, "D3");
+  auto d04 = ConnectAlarmSender(kDigitalInputPin4, "D4");
 
-  alarm_d3_input->connect_to(
+  d03->connect_to(
       new LambdaConsumer<bool>([](bool value) { alarm_states[0] = value; })
   );
-  alarm_d4_input->connect_to(
+  d04->connect_to(
       new LambdaConsumer<bool>([](bool value) { alarm_states[1] = value; })
   );
+
+  // --------------------------------------------------------------------
+  // 7b. Compass (BNO055)
+  // --------------------------------------------------------------------
+  ValueProducer<float>* heading_sensor = nullptr;
+  ValueProducer<float>* pitch_sensor = nullptr;
+  ValueProducer<float>* roll_sensor = nullptr;
+  if (bno055) {
+    heading_sensor = new sensesp::RepeatSensor<float>(
+        100,  // 100ms interval
+        []() {
+          sensors_event_t event;
+          bno055->getEvent(&event, Adafruit_BNO055::VECTOR_EULER);
+          return event.orientation.x;  // Heading in degrees
+        }
+    );
+    pitch_sensor = new sensesp::RepeatSensor<float>(
+        100,  // 100ms interval
+        []() {
+          sensors_event_t event;
+          bno055->getEvent(&event, Adafruit_BNO055::VECTOR_EULER);
+          return event.orientation.y;  // Pitch in degrees
+        }
+    );
+    roll_sensor = new sensesp::RepeatSensor<float>(
+        100,  // 100ms interval
+        []() {
+          sensors_event_t event;
+          bno055->getEvent(&event, Adafruit_BNO055::VECTOR_EULER);
+          return event.orientation.z;  // Roll in degrees
+        }
+    );
+  }
 
   // --------------------------------------------------------------------
   // 8. NMEA 2000 Engine Dynamic Senders
@@ -218,42 +327,48 @@ void setup() {
       ->set_description("NMEA 2000 dynamic engine parameters for engine 2")
       ->set_sort_order(2100);
 
-  if (port_temp_f) {
-    port_temp_f->connect_to(
+  if (a12) {
+    // Port Coolant Temperature
+    a12->connect_to(
       new sensesp::LambdaTransform<float, double>([](float f) {
         return (f - 32.0) * 5.0 / 9.0 + 273.15;
       })
     )->connect_to(engine_1_dynamic_sender->temperature_);
   }
 
-  if (stbd_temp_f) {
-    stbd_temp_f->connect_to(
+  if (a14) {
+    // Stbd Coolant Temperature
+    a14->connect_to(
       new sensesp::LambdaTransform<float, double>([](float f) {
         return (f - 32.0) * 5.0 / 9.0 + 273.15;
       })
     )->connect_to(engine_2_dynamic_sender->temperature_);
   }
 
-  if (port_oil_psi) {
-    port_oil_psi->connect_to(
+  if (a11) {
+    // Port Oil Pressure
+    a11->connect_to(
       new sensesp::LambdaTransform<float, double>([](float psi) { return psi * 6894.76; })
     )->connect_to(engine_1_dynamic_sender->oil_pressure_);
   }
 
-  if (stbd_oil_psi) {
-    stbd_oil_psi->connect_to(
+  if (a13) {
+    // Stbd Oil Pressure
+    a13->connect_to(
       new sensesp::LambdaTransform<float, double>([](float psi) { return psi * 6894.76; })
     )->connect_to(engine_2_dynamic_sender->oil_pressure_);
   }
 
-  alarm_d3_input->connect_to(engine_1_dynamic_sender->low_oil_pressure_);
-  alarm_d4_input->connect_to(engine_2_dynamic_sender->low_oil_pressure_);
+  // Port Low Oil Pressure Alarm
+  d03->connect_to(engine_1_dynamic_sender->low_oil_pressure_);
+  // Stbd Low Oil Pressure Alarm
+  d04->connect_to(engine_2_dynamic_sender->low_oil_pressure_);
 
   // --------------------------------------------------------------------
   // 9. Digital tacho inputs
   // --------------------------------------------------------------------
-  auto tacho_d1_frequency = ConnectTachoSender(kDigitalInputPin1, "port");
-  auto tacho_d2_frequency = ConnectTachoSender(kDigitalInputPin2, "stbd");
+  auto d01 = ConnectTachoSender(kDigitalInputPin1, "port");
+  auto d02 = ConnectTachoSender(kDigitalInputPin2, "stbd");
 
   N2kEngineParameterRapidSender* engine_1_rapid_sender =
       new N2kEngineParameterRapidSender("/NMEA 2000/Engine 1 Rapid Update", 0, nmea2000);
@@ -261,7 +376,8 @@ void setup() {
       ->set_title("Engine 1 Rapid Update")
       ->set_description("NMEA 2000 rapid update engine parameters for engine 1")
       ->set_sort_order(2500);
-  tacho_d1_frequency->connect_to(&(engine_1_rapid_sender->engine_speed_));
+  // Port Engine RPM
+  d01->connect_to(&(engine_1_rapid_sender->engine_speed_));
 
   N2kEngineParameterRapidSender* engine_2_rapid_sender =
       new N2kEngineParameterRapidSender("/NMEA 2000/Engine 2 Rapid Update", 1, nmea2000);
@@ -269,77 +385,55 @@ void setup() {
       ->set_title("Engine 2 Rapid Update")
       ->set_description("NMEA 2000 rapid update engine parameters for engine 2")
       ->set_sort_order(2505);
-  tacho_d2_frequency->connect_to(&(engine_2_rapid_sender->engine_speed_));
+  // Stbd Engine RPM
+  d02->connect_to(&(engine_2_rapid_sender->engine_speed_));
 
   // --------------------------------------------------------------------
   // 10. NMEA 2000 Rudder Sender
   // --------------------------------------------------------------------
   N2kRudderSender* rudder_sender = new N2kRudderSender("/NMEA 2000/Rudder", 0, nmea2000);
-  rudder_deg->connect_to(&rudder_sender->rudder_angle_deg_);
+  // Rudder Angle
+  a01->connect_to(&rudder_sender->rudder_angle_deg_);
 
   // --------------------------------------------------------------------
-  // 11. NMEA 2000 Trim Tabs (both port & starboard = same value)
+  // 11. NMEA 2000 Trim Tabs
   // --------------------------------------------------------------------
   N2kTrimTabSender* trim_tab_sender = new N2kTrimTabSender("/NMEA 2000/Trim Tabs", nmea2000);
   ConfigItem(trim_tab_sender)
       ->set_title("Trim Tabs NMEA 2000")
       ->set_sort_order(3006);
-
-  trim_deg->connect_to(&trim_tab_sender->trim_deg_);
-
-  // --------------------------------------------------------------------
-  // 12. NMEA 2000 Transmission Senders
-  // --------------------------------------------------------------------
-  N2kTransmissionSender* port_transmission_sender = new N2kTransmissionSender(
-      "/NMEA 2000/Port Transmission", 0, nmea2000
-  );
-  ConfigItem(port_transmission_sender)
-      ->set_title("Port Transmission NMEA 2000")
-      ->set_sort_order(3011);
-
-  port_gear_position->connect_to(
-    new sensesp::LambdaTransform<float, int>([](float ratio) -> int {
-      if (ratio < 0.25f) return 0;  // Reverse
-      if (ratio < 0.75f) return 1;  // Neutral
-      return 2;                     // Forward
-    })
-  )->connect_to(&port_transmission_sender->gear_);
-
-  N2kTransmissionSender* stbd_transmission_sender = new N2kTransmissionSender(
-      "/NMEA 2000/Stbd Transmission", 1, nmea2000
-  );
-  ConfigItem(stbd_transmission_sender)
-      ->set_title("Stbd Transmission NMEA 2000")
-      ->set_sort_order(3016);
-
-  stbd_gear_position->connect_to(
-    new sensesp::LambdaTransform<float, int>([](float ratio) -> int {
-      if (ratio < 0.25f) return 0;  // Reverse
-      if (ratio < 0.75f) return 1;  // Neutral
-      return 2;                     // Forward
-    })
-  )->connect_to(&stbd_transmission_sender->gear_);
+  a02->connect_to(&trim_tab_sender->trim_deg_port_);
+  a02->connect_to(&trim_tab_sender->trim_deg_stbd_);
 
   // ========================================================================
   // 13. OLED — WORKS WITH OR WITHOUT OLED, !!STATIC OR BUST!!
   // ========================================================================
 if (display_present && display) {
-// === ROW 0: WiFi Status (alternates between SSID + signal and IP address) ===
-static bool show_ip = false;
+// === ROW 0: WiFi Status / IP Address / AIS (rotates every 5 seconds) ===
+static int display_state = 0;
 event_loop()->onRepeat(5000, []() {
   if (WiFi.status() == WL_CONNECTED) {
-    if (show_ip) {
+    if (display_state == 0) {
+      // SSID + signal
+      String ssid = WiFi.SSID();
+      ssid.replace("°", ".");
+      String signal = String(WiFi.RSSI()) + "dBm";
+      PrintValue(display, 0, ssid, signal, "");
+    } else if (display_state == 1) {
+      // IP address
       String ip = WiFi.localIP().toString();
       PrintValue(display, 0, ip, "", "");
     } else {
-      String ssid = WiFi.SSID();
-      String signal = String(WiFi.RSSI()) + "dBm";
-      PrintValue(display, 0, ssid, signal, "");
+      // AIS counts
+      extern int ais_msg_count_a, ais_msg_count_b;
+      String ais_a = String(ais_msg_count_a) + "a";
+      String ais_b = String(ais_msg_count_b) + "b";
+      PrintValue(display, 0, "AIS", ais_a, ais_b);
     }
-    show_ip = !show_ip;  // toggle for next cycle
+    display_state = (display_state + 1) % 3;
   } else {
     PrintValue(display, 0, "WiFi Offline", "", "");
-    show_ip = false;  // reset when offline
+    display_state = 0;  // reset when offline
   }
 });
 
@@ -360,11 +454,13 @@ event_loop()->onRepeat(1000, []() {
   auto update_rpm = [&]() {
     PrintValue(display, 2, "RPM", rpm_l, rpm_r);
   };
-  tacho_d1_frequency->connect_to(new LambdaConsumer<float>([&](float v) {
+  // Port Engine RPM
+  d01->connect_to(new LambdaConsumer<float>([&](float v) {
     rpm_l = String((int)(60 * v));
     update_rpm();
   }));
-  tacho_d2_frequency->connect_to(new LambdaConsumer<float>([&](float v) {
+  // Stbd Engine RPM
+  d02->connect_to(new LambdaConsumer<float>([&](float v) {
     rpm_r = String((int)(60 * v));
     update_rpm();
   }));
@@ -376,15 +472,21 @@ event_loop()->onRepeat(1000, []() {
     String s = oil_r + "p";
     PrintValue(display, 3, "Oil", p, s);
   };
-  if (port_oil_psi) port_oil_psi->connect_to(new LambdaConsumer<float>([&](float v){
-    oil_l = String((int)v);
-    update_oil();
-  }));
-  if (stbd_oil_psi) stbd_oil_psi->connect_to(new LambdaConsumer<float>([&](float v){
-    oil_r = String((int)v);
-    update_oil();
-  }));
-  if (!port_oil_psi && !stbd_oil_psi) {
+  if (a11) {
+    // Port Oil Pressure
+    a11->connect_to(new LambdaConsumer<float>([&](float v){
+      oil_l = String((int)v);
+      update_oil();
+    }));
+  }
+  if (a13) {
+    // Stbd Oil Pressure
+    a13->connect_to(new LambdaConsumer<float>([&](float v){
+      oil_r = String((int)v);
+      update_oil();
+    }));
+  }
+  if (!a11 && !a13) {
     PrintValue(display, 3, "Oil", "--p", "--p");
   }
 
@@ -395,15 +497,21 @@ event_loop()->onRepeat(1000, []() {
     String s = temp_r + "f";
     PrintValue(display, 4, "Temp", p, s);
   };
-  if (port_temp_f) port_temp_f->connect_to(new LambdaConsumer<float>([&](float v){
-    temp_l = String((int)v);
-    update_temp();
-  }));
-  if (stbd_temp_f) stbd_temp_f->connect_to(new LambdaConsumer<float>([&](float v){
-    temp_r = String((int)v);
-    update_temp();
-  }));
-  if (!port_temp_f && !stbd_temp_f) {
+  if (a12) {
+    // Port Coolant Temperature
+    a12->connect_to(new LambdaConsumer<float>([&](float v){
+      temp_l = String((int)v);
+      update_temp();
+    }));
+  }
+  if (a14) {
+    // Stbd Coolant Temperature
+    a14->connect_to(new LambdaConsumer<float>([&](float v){
+      temp_r = String((int)v);
+      update_temp();
+    }));
+  }
+  if (!a12 && !a14) {
     PrintValue(display, 4, "Temp", "---f", "---f");
   }
 
@@ -412,11 +520,13 @@ event_loop()->onRepeat(1000, []() {
   auto update_gear = [&]() {
     PrintValue(display, 5, "Gear", gear_l, gear_r);
   };
-  port_gear_position->connect_to(new LambdaConsumer<float>([&](float v) {
+  // Port Transmission Gear
+  a03->connect_to(new LambdaConsumer<float>([&](float v) {
     gear_l = (v < 0.25f) ? "R" : ((v < 0.75f) ? "N" : "F");
     update_gear();
   }));
-  stbd_gear_position->connect_to(new LambdaConsumer<float>([&](float v) {
+  // Stbd Transmission Gear
+  a04->connect_to(new LambdaConsumer<float>([&](float v) {
     gear_r = (v < 0.25f) ? "R" : ((v < 0.75f) ? "N" : "F");
     update_gear();
   }));
@@ -426,23 +536,30 @@ event_loop()->onRepeat(1000, []() {
   auto update_rudtrm = [&]() {
     PrintValue(display, 6, "Rd/Tr", rud, trm);
   };
-  rudder_deg->connect_to(new LambdaConsumer<float>([&](float v) {
+  // Rudder Angle
+  a01->connect_to(new LambdaConsumer<float>([&](float v) {
     rud = String((int)v);
     update_rudtrm();
   }));
-  trim_deg->connect_to(new LambdaConsumer<float>([&](float v) {
+  // Trim Angle
+  a02->connect_to(new LambdaConsumer<float>([&](float v) {
     trm = String((int)v);
     update_rudtrm();
   }));
 
-  // === ROW 7: AIS ===
-  static String ais_a = "0a", ais_b = "0b";
-  event_loop()->onRepeat(1000, []() {
-    extern int ais_msg_count_a, ais_msg_count_b;
-    ais_a = String(ais_msg_count_a) + "a";
-    ais_b = String(ais_msg_count_b) + "b";
-    PrintValue(display, 7, "AIS", ais_a, ais_b);
-  });
+  // === ROW 7: Heading ===
+  if (heading_sensor) {
+    static String heading_str = "---";
+    auto update_heading = [&]() {
+      PrintValue(display, 7, "HDG", heading_str, "");
+    };
+    heading_sensor->connect_to(new LambdaConsumer<float>([&](float v) {
+      heading_str = String((int)v);
+      update_heading();
+    }));
+  } else {
+    PrintValue(display, 7, "HDG", "---", "");
+  }
 }
 
   // To avoid garbage collecting all shared pointers created in setup(),

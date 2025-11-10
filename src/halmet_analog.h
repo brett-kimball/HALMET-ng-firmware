@@ -9,6 +9,26 @@
 namespace halmet {
 
 // ========================================================================
+// GLOBAL CONFIG
+// ========================================================================
+extern bool g_enable_calibration;
+
+// ========================================================================
+// ANALOG SENSOR TYPES
+// ========================================================================
+enum AnalogSensorType {
+    TEMPERATURE,
+    PRESSURE,
+    FUEL_LEVEL,
+    RUDDER_ANGLE,
+    TRIM_ANGLE,
+    TRANSMISSION_GEAR,
+    THROTTLE_POSITION,
+    GENERIC_VOLTAGE,
+    GENERIC_RESISTANCE
+};
+
+// ========================================================================
 // HALMET ANALOG INPUT HELPERS
 // ========================================================================
 
@@ -79,6 +99,22 @@ sensesp::FloatProducer* ConnectTransmissionGearSender(
     const String& sk_id,
     int sort_order,
     bool enable_signalk_output = true
+);
+
+// ========================================================================
+// UNIFIED ANALOG SENDER FUNCTION
+// ========================================================================
+sensesp::FloatProducer* ConnectAnalogSender(
+    Adafruit_ADS1115* ads1115,
+    int channel,
+    AnalogSensorType type,
+    const String& instance,
+    const String& hardware_id,
+    int sort_order,
+    bool enable_signalk_output = true,
+    bool enable_raw_sk = true,
+    float offset = 0.0,
+    float multiplier = 1.0
 );
 
 // ========================================================================

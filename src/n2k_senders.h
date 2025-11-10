@@ -584,25 +584,30 @@ class N2kTrimTabSender : public sensesp::FileSystemSaveable {
 
     sensesp::event_loop()->onRepeat(repeat_interval_, [this]() {
       tN2kMsg msg;
-      double deg = trim_deg_exp_->get();  // Always get the value
-      SetN2kPGN130576(msg, deg * DEG_TO_RAD, deg * DEG_TO_RAD);
+      double port_deg = trim_deg_port_exp_->get();  // Always get the value
+      double stbd_deg = trim_deg_stbd_exp_->get();  // Always get the value
+      SetN2kPGN130576(msg, port_deg * DEG_TO_RAD, stbd_deg * DEG_TO_RAD);
       nmea2000_->SendMsg(msg);
     });
   }
 
-  sensesp::ObservableValue<double> trim_deg_;
+  sensesp::ObservableValue<double> trim_deg_port_;
+  sensesp::ObservableValue<double> trim_deg_stbd_;
 
  protected:
   tNMEA2000* nmea2000_;
   unsigned int repeat_interval_;
   unsigned int expiry_;
 
-  std::shared_ptr<sensesp::RepeatExpiring<double>> trim_deg_exp_;
+  std::shared_ptr<sensesp::RepeatExpiring<double>> trim_deg_port_exp_;
+  std::shared_ptr<sensesp::RepeatExpiring<double>> trim_deg_stbd_exp_;
 
  private:
   void initialize_members(unsigned int repeat, unsigned int exp) {
-    trim_deg_exp_ = std::make_shared<sensesp::RepeatExpiring<double>>(repeat, exp);
-    trim_deg_.connect_to(trim_deg_exp_);
+    trim_deg_port_exp_ = std::make_shared<sensesp::RepeatExpiring<double>>(repeat, exp);
+    trim_deg_port_.connect_to(trim_deg_port_exp_);
+    trim_deg_stbd_exp_ = std::make_shared<sensesp::RepeatExpiring<double>>(repeat, exp);
+    trim_deg_stbd_.connect_to(trim_deg_stbd_exp_);
   }
 };
 
@@ -686,6 +691,171 @@ const String ConfigSchema(const N2kTransmissionSender& obj) {
         "description": "Transmission NMEA 2000 instance (0-15)"
       }
     }
+  })###";
+};
+
+/**
+ * @brief Transmit NMEA 2000 PGN 127250: Vessel Heading
+ *
+ * Sends magnetic heading.
+ */
+class N2kHeadingSender : public sensesp::FileSystemSaveable {
+ public:
+  N2kHeadingSender(
+      String config_path,
+      tNMEA2000* nmea2000
+  )
+      : sensesp::FileSystemSaveable{config_path},
+        nmea2000_{nmea2000},
+        repeat_interval_{100},  // ms — NMEA 2000 standard
+        expiry_{1000}           // ms — input timeout
+  {
+    this->initialize_members(repeat_interval_, expiry_);
+
+    heading_.connect_to(
+        new sensesp::LambdaTransform<double, double>(
+            [](double deg) { return deg * DEG_TO_RAD; })  // Convert to radians
+    )->connect_to(heading_rad_);
+
+    sensesp::event_loop()->onRepeat(repeat_interval_, [this]() {
+      tN2kMsg N2kMsg;
+      SetN2kMagneticHeading(
+          N2kMsg,
+          this->sid_++,
+          this->heading_rad_->get(),
+          0.0,  // Deviation (not available)
+          0.0   // Variation (not available)
+      );
+      this->nmea2000_->SendMsg(N2kMsg);
+    });
+  }
+
+  // --------------------------------------------------------------------
+  // CONFIGURATION PERSISTENCE
+  // --------------------------------------------------------------------
+  virtual bool from_json(const JsonObject& config) override {
+    return true;  // No config needed
+  }
+
+  virtual bool to_json(JsonObject& config) override {
+    return true;
+  }
+
+  // --------------------------------------------------------------------
+  // INPUTS
+  // --------------------------------------------------------------------
+  sensesp::ObservableValue<double> heading_;  // Degrees
+
+ protected:
+  unsigned int repeat_interval_;
+  unsigned int expiry_;
+  tNMEA2000* nmea2000_;
+  uint8_t sid_ = 0;
+
+  std::shared_ptr<sensesp::RepeatExpiring<double>> heading_rad_;
+
+ private:
+  void initialize_members(unsigned int repeat_interval, unsigned int expiry) {
+    heading_rad_ = std::make_shared<sensesp::RepeatExpiring<double>>(
+        repeat_interval, expiry
+    );
+  }
+};
+
+const String ConfigSchema(const N2kHeadingSender& obj) {
+  return R"###({
+    "type": "object",
+    "properties": {}
+  })###";
+};
+
+/**
+ * @brief Transmit NMEA 2000 PGN 127257: Attitude
+ *
+ * Sends pitch and roll angles.
+ */
+class N2kAttitudeSender : public sensesp::FileSystemSaveable {
+ public:
+  N2kAttitudeSender(
+      String config_path,
+      tNMEA2000* nmea2000
+  )
+      : sensesp::FileSystemSaveable{config_path},
+        nmea2000_{nmea2000},
+        repeat_interval_{100},  // ms — NMEA 2000 standard
+        expiry_{1000}           // ms — input timeout
+  {
+    this->initialize_members(repeat_interval_, expiry_);
+
+    pitch_.connect_to(
+        new sensesp::LambdaTransform<double, double>(
+            [](double deg) { return deg * DEG_TO_RAD; })  // Convert to radians
+    )->connect_to(pitch_rad_);
+
+    roll_.connect_to(
+        new sensesp::LambdaTransform<double, double>(
+            [](double deg) { return deg * DEG_TO_RAD; })  // Convert to radians
+    )->connect_to(roll_rad_);
+
+    sensesp::event_loop()->onRepeat(repeat_interval_, [this]() {
+      tN2kMsg N2kMsg;
+      SetN2kAttitude(
+          N2kMsg,
+          this->sid_++,
+          this->roll_rad_->get(),
+          this->pitch_rad_->get(),
+          N2kDoubleNA  // Yaw not used, heading is separate
+      );
+      this->nmea2000_->SendMsg(N2kMsg);
+    });
+  }
+
+  // --------------------------------------------------------------------
+  // CONFIGURATION PERSISTENCE
+  // --------------------------------------------------------------------
+  virtual bool from_json(const JsonObject& config) override {
+    return true;  // No config needed
+  }
+
+  virtual bool to_json(JsonObject& config) override {
+    return true;
+  }
+
+  // --------------------------------------------------------------------
+  // INPUTS
+  // --------------------------------------------------------------------
+  sensesp::ObservableValue<double> pitch_;  // Degrees
+  sensesp::ObservableValue<double> roll_;   // Degrees
+  sensesp::ObservableValue<double> yaw_;    // Degrees (optional, can be N/A)
+
+ protected:
+  unsigned int repeat_interval_;
+  unsigned int expiry_;
+  tNMEA2000* nmea2000_;
+  uint8_t sid_ = 0;
+
+  std::shared_ptr<sensesp::RepeatExpiring<double>> pitch_rad_;
+  std::shared_ptr<sensesp::RepeatExpiring<double>> roll_rad_;
+  std::shared_ptr<sensesp::RepeatExpiring<double>> yaw_rad_;
+
+ private:
+  void initialize_members(unsigned int repeat_interval, unsigned int expiry) {
+    pitch_rad_ = std::make_shared<sensesp::RepeatExpiring<double>>(
+        repeat_interval, expiry
+    );
+    roll_rad_ = std::make_shared<sensesp::RepeatExpiring<double>>(
+        repeat_interval, expiry
+    );
+    yaw_rad_ = std::make_shared<sensesp::RepeatExpiring<double>>(
+        repeat_interval, expiry
+    );
+  }
+};
+
+const String ConfigSchema(const N2kAttitudeSender& obj) {
+  return R"###({
+    "type": "object",
+    "properties": {}
   })###";
 };
 
