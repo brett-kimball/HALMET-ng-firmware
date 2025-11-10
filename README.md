@@ -8,3 +8,13 @@ By default, the example firmware is configured to read the engine RPM from input
 
 To customize the software for your own purposes, edit the `src/main.cpp` file.
 Parts intended to be customized are marked with `EDIT:` comments.
+
+## SPIFFS Maintenance
+
+The firmware includes built-in SPIFFS cleanup functionality for maintenance:
+
+- **Automatic cleanup**: Runs once on first boot to remove old configuration files
+- **Manual cleanup**: Enable `FORCE_SPIFFS_CLEANUP` in `platformio.ini` for file-by-file cleanup
+- **Full format**: Enable `FORCE_SPIFFS_FORMAT` in `platformio.ini` for complete SPIFFS wipe
+
+See `docs/cleanup-and-session.md` for detailed instructions. Always backup your configuration before running cleanup operations.

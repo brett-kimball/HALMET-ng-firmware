@@ -28,6 +28,7 @@
 #include "ais_gateway.h"
 #include "sensesp/net/http_server.h"
 #include "sensesp/net/networking.h"
+#include "SPIFFS.h"
 
 using namespace sensesp;
 using namespace halmet;
@@ -132,6 +133,121 @@ void setup() {
                     ->enable_ota("thisisfine")
                     ->get_app();
 
+  // ------------------------------------------------------------------
+  // SPIFFS Cleanup / Format helpers (INACTIVE by default)
+  // ------------------------------------------------------------------
+  // This block implements two guarded, one-shot maintenance actions that
+  // you can enable temporarily when you need to remove old persisted
+  // configuration files or fully reformat SPIFFS on a device.
+  //
+  // Available compile-time flags (do NOT enable these in normal builds):
+  //
+  //  - FORCE_SPIFFS_CLEANUP
+  //      When defined, the firmware will perform a file-by-file cleanup
+  //      at boot: it will iterate over SPIFFS and remove all files except
+  //      the `/www` folder (which contains the web UI static assets). The
+  //      code then writes `/persist_cleanup_done` so the cleanup does not
+  //      repeat on subsequent boots.
+  //
+  //  - FORCE_SPIFFS_FORMAT
+  //      When defined, the firmware will call `SPIFFS.format()` to erase
+  //      the entire SPIFFS filesystem. This is the most destructive option
+  //      and will remove *all* files, including `/www` unless you reflash
+  //      the filesystem image later. It writes `/persist_format_done` so
+  //      it does not repeat.
+  //
+  // Safe usage instructions:
+  // 1) BACKUP: Export `/System/ConfigExport` from the web UI and save it
+  //    externally. Also note WiFi/OTA settings if needed.
+  // 2) ENABLE: In your local copy of `platformio.ini`, temporarily add
+  //    `-D FORCE_SPIFFS_CLEANUP=1` or `-D FORCE_SPIFFS_FORMAT=1` under the
+  //    `[env:halmet]` `build_flags` section. Example:
+  //
+  //      [env:halmet]
+  //      build_flags =
+  //          ${pioarduino.build_flags}
+  //          ${esp32.build_flags}
+  //          -D ARDUINOJSON_ENABLE_COMMENTS=1
+  //          -D FORCE_SPIFFS_CLEANUP=1
+  //
+  // 3) BUILD & FLASH: Build and upload firmware to the device. Monitor the
+  //    serial output — the firmware will print which files it removes and
+  //    whether the format succeeded.
+  // 4) VERIFY: Open the web UI and confirm the desired cleanup occurred.
+  // 5) REVERT: Immediately remove the `-D FORCE_*` flag(s) from
+  //    `platformio.ini` and rebuild, or revert the commit. Leaving the
+  //    flags enabled will re-run the destructive action on every new
+  //    flash/boot, which is dangerous.
+  //
+  // Notes:
+  //  - The code is intentionally guarded with #if defined(...) so it is
+  //    inactive by default. The repository currently does NOT enable any
+  //    FORCE_SPIFFS_* flags in `platformio.ini`.
+  //  - The file-by-file cleanup preserves `/www` to keep the web UI
+  //    assets. The format option erases everything and should be used only
+  //    when you plan to reflash the UI assets or do a full restore.
+  // ------------------------------------------------------------------
+#if defined(FORCE_SPIFFS_CLEANUP)
+  Serial.println("FORCED: performing one-shot SPIFFS cleanup (FORCE_SPIFFS_CLEANUP enabled)");
+  if (SPIFFS.begin(true)) {
+    File root = SPIFFS.open("/");
+    if (root) {
+      File file = root.openNextFile();
+      while (file) {
+        String name = String(file.name());
+        if (name != "/www") {
+          Serial.printf("Removing SPIFFS file: %s\n", name.c_str());
+          SPIFFS.remove(name);
+        }
+        file = root.openNextFile();
+      }
+      root.close();
+    }
+    // write the marker so normal code path will not attempt cleanup again
+    const char* cleanup_marker = "/persist_cleanup_done";
+    File mf = SPIFFS.open(cleanup_marker, FILE_WRITE);
+    if (mf) { mf.printf("done\n"); mf.close(); Serial.println("persist_cleanup_done marker written"); }
+  } else {
+    Serial.println("ERROR: SPIFFS.begin() failed for cleanup");
+  }
+#else
+  const char* cleanup_marker = "/persist_cleanup_done";
+  if (SPIFFS.begin(true) && !SPIFFS.exists(cleanup_marker)) {
+    Serial.println("persist_cleanup_done marker not found — performing one-shot SPIFFS cleanup");
+    File root = SPIFFS.open("/");
+    if (root) {
+      File file = root.openNextFile();
+      while (file) {
+        String name = String(file.name());
+        if (name != "/www") {
+          Serial.printf("Removing SPIFFS file: %s\n", name.c_str());
+          SPIFFS.remove(name);
+        }
+        file = root.openNextFile();
+      }
+      root.close();
+    }
+    File mf = SPIFFS.open(cleanup_marker, FILE_WRITE);
+    if (mf) { mf.printf("done\n"); mf.close(); Serial.println("persist_cleanup_done marker written"); }
+  }
+#endif
+
+  // One-shot SPIFFS FORMAT (destructive) - formats the filesystem completely
+  // and writes /persist_format_done so it does not repeat. Controlled via
+  // the FORCE_SPIFFS_FORMAT compile-time flag. This is more aggressive than
+  // the file-by-file cleanup above and will erase everything in SPIFFS.
+#if defined(FORCE_SPIFFS_FORMAT)
+  if (SPIFFS.begin(true) && !SPIFFS.exists("/persist_format_done")) {
+    Serial.println("FORCED: formatting SPIFFS (FORCE_SPIFFS_FORMAT enabled)");
+    bool ok = SPIFFS.format();
+    Serial.printf("SPIFFS.format() returned: %d\n", ok);
+    File mf2 = SPIFFS.open("/persist_format_done", FILE_WRITE);
+    if (mf2) { mf2.printf("done\n"); mf2.close(); Serial.println("persist_format_done marker written"); }
+  } else {
+    Serial.println("persist_format_done marker present — skipping format");
+  }
+#endif
+
   // --------------------------------------------------------------------
   // 2. Initialize the I2C bus
   // --------------------------------------------------------------------
@@ -232,7 +348,7 @@ void setup() {
 
   // CRUISE CONTROL ANGLE — ACTIVE MODE
   auto* a02 = ConnectAnalogSender(
-      ads1115_0, 1, TRIM_ANGLE, "main", "a02", 3005, true, enable_calibration
+      ads1115_0, 1, TRIM_ANGLE, "port", "a02", 3005, true, enable_calibration
   );
 
   // TRANSMISSION GEARS - ACTIVE MODE
