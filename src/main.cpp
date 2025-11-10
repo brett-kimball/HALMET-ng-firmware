@@ -35,6 +35,8 @@
 #include "halmet_serial.h"
 #include "sensesp/net/http_server.h"
 #include "sensesp/net/networking.h"
+#include "SPIFFS.h"
+#include "config_json.h"
 
 using namespace sensesp;
 using namespace halmet;
@@ -180,6 +182,273 @@ if (!global_sk_enable) {
       ->set_description("Global toggle for all analog Signal K paths")
       ->set_sort_order(0);
 }
+
+  // Ensure SPIFFS is mounted for config JSON operations
+  if (!SPIFFS.begin(true)) {
+    Serial.println("WARN: SPIFFS mount failed — config JSON features disabled");
+  }
+
+  // Prepare heap-allocated global import/export strings so they are in scope
+  // for polling tasks defined later in setup().
+  auto* global_config_export_def = new String(halmet_config::get_merged_config_string());
+  if (global_config_export_def->length() == 0) *global_config_export_def = String("{}");
+  auto* global_config_export_path = new String("/System/ConfigExport");
+  auto* global_config_import_def = new String("");
+  auto* global_config_import_path = new String("/System/ConfigImport");
+  // Import error display
+  auto* global_config_import_err_def = new String("");
+  auto* global_config_import_err_path = new String("/System/ConfigImportError");
+
+  // Register Export/Import fields under top-level ConfigItems so they are visible
+  {
+    auto* export_cfg = new sensesp::StringConfig(*global_config_export_def, *global_config_export_path);
+    auto export_ci = sensesp::ConfigItem(export_cfg);
+    export_ci->set_title("Export Merged Config (read-only)")->set_sort_order(10)->set_description(String("Copy this JSON to backup or to another device"));
+
+    auto* import_cfg = new sensesp::StringConfig(*global_config_import_def, *global_config_import_path);
+    auto import_ci = sensesp::ConfigItem(import_cfg);
+    import_ci->set_title("Import Overrides JSON")->set_sort_order(11)->set_description(String("Paste your persisted_config.json here and Save to apply overrides. Use Reset to revert."));
+
+    // Import error display (read-only field)
+    auto* import_err_cfg = new sensesp::StringConfig(*global_config_import_err_def, *global_config_import_err_path);
+    auto import_err_ci = sensesp::ConfigItem(import_err_cfg);
+    import_err_ci->set_title("Import Error")->set_sort_order(12)->set_description(String("Last import parse/save error (empty when OK)"));
+  }
+
+  // Per-input calibration JSON editors (A01..A04)
+  for (int i = 1; i <= 4; ++i) {
+    String name = String("A") + (i < 10 ? String("0") + String(i) : String(i));
+    char path_buf[80];
+    snprintf(path_buf, sizeof(path_buf), "/Inputs/%s/CalibrationJSON", name.c_str());
+    String path_str = String(path_buf);
+    // Attempt to extract existing calibration from merged config
+    String default_json = String("");
+    String merged = halmet_config::get_merged_config_string();
+    if (merged.length() > 0) {
+      DynamicJsonDocument d(16 * 1024);
+      if (!deserializeJson(d, merged)) {
+        if (d.containsKey("inputs") && d["inputs"].containsKey(name.c_str())) {
+          JsonObject in = d["inputs"][name.c_str()].as<JsonObject>();
+          // Prefer raw calibration text (preserves comments) if present in
+          // merged overrides; otherwise fall back to the structured object.
+          if (in.containsKey("calibration_raw")) {
+            const char* raw = in["calibration_raw"].as<const char*>();
+            if (raw) default_json = String(raw);
+          } else if (in.containsKey("calibration")) {
+            String tmp;
+            serializeJson(in["calibration"], tmp);
+            default_json = tmp;
+          }
+        }
+      }
+    }
+    auto* cal_def = new String(default_json);
+    auto* cal_path = new String(path_str);
+    auto* cfg = new sensesp::StringConfig(*cal_def, *cal_path);
+    auto ci = sensesp::ConfigItem(cfg);
+    ci->set_title(name + String(" Calibration (JSON)"))->set_sort_order(1200 + i)->set_description(String("Advanced calibration JSON for ") + name + String(". Save to persist override; empty to revert to defaults."));
+
+    // Calibration error field per-input
+    auto* cal_err_def = new String("");
+    auto* cal_err_path = new String(String("/Inputs/") + name + String("/CalibrationError"));
+    auto* cal_err_cfg = new sensesp::StringConfig(*cal_err_def, *cal_err_path);
+    auto cal_err_ci = sensesp::ConfigItem(cal_err_cfg);
+    cal_err_ci->set_title(name + String(" Calibration Error"))->set_sort_order(1210 + i)->set_description(String("Last calibration parse/save error (empty when OK)"));
+
+    // Persist changes to this calibration JSON on change (poll every 2s)
+    String input_id = name;
+    auto* cfg_path_ptr = new String(path_str);
+    auto* prev_val = new String(*cal_def);
+    // capture cal_err_path pointer for error writes
+    event_loop()->onRepeat(2000, [prev_val, cfg_path_ptr, input_id, cal_err_path]() {
+      String def_empty = String("");
+      sensesp::StringConfig watcher(def_empty, *cfg_path_ptr);
+      String v = watcher.get_value();
+      if (v != *prev_val) {
+        *prev_val = v;
+        // Validate JSON first
+        if (v.length() == 0 || v == "null") {
+          // Clear override
+          String err;
+          if (halmet_config::set_input_calibration(input_id, String(""), &err)) {
+            Serial.printf("Cleared calibration override for %s\n", input_id.c_str());
+            // clear error field
+            String* err_def2 = new String("");
+            sensesp::StringConfig err_cfg(*err_def2, *cal_err_path);
+            err_cfg.save();
+          } else {
+            Serial.printf("Failed to clear calibration override for %s: %s\n", input_id.c_str(), err.c_str());
+            String* err_def2 = new String(err);
+            sensesp::StringConfig err_cfg(*err_def2, *cal_err_path);
+            err_cfg.save();
+          }
+        } else {
+          DynamicJsonDocument d(8 * 1024);
+          DeserializationError derr = deserializeJson(d, v);
+          if (derr) {
+            String msg = String("JSON parse error: ") + derr.c_str();
+            Serial.printf("Calibration parse error for %s: %s\n", input_id.c_str(), derr.c_str());
+            String* err_def2 = new String(msg);
+            sensesp::StringConfig err_cfg(*err_def2, *cal_err_path);
+            err_cfg.save();
+          } else {
+            // JSON parsed; attempt to save structured calibration and also
+            // persist the raw text so comments are round-trippable.
+            String err_struct;
+            String err_raw;
+            bool ok_struct = halmet_config::set_input_calibration(input_id, v, &err_struct);
+            bool ok_raw = halmet_config::set_input_calibration_raw(input_id, v, &err_raw);
+            if (ok_struct && ok_raw) {
+              Serial.printf("Saved calibration override for %s (structured + raw)\n", input_id.c_str());
+              // clear error field
+              String* err_def2 = new String("");
+              sensesp::StringConfig err_cfg(*err_def2, *cal_err_path);
+              err_cfg.save();
+            } else {
+              // Prefer structured error if present, otherwise raw error
+              String msg = ok_struct ? err_raw : err_struct;
+              Serial.printf("Failed to save calibration override for %s: %s\n", input_id.c_str(), msg.c_str());
+              String* err_def2 = new String(msg);
+              sensesp::StringConfig err_cfg(*err_def2, *cal_err_path);
+              err_cfg.save();
+            }
+          }
+        }
+      }
+    });
+  }
+
+  // Polling task to process Import field every 2s
+  event_loop()->onRepeat(2000, [global_config_import_path]() {
+    // Use heap-allocated lvalues for StringConfig constructor
+    String* path = new String(*global_config_import_path);
+    String* def = new String("");
+    sensesp::StringConfig import_cfg(*def, *path);
+    String v = import_cfg.get_value();
+    if (!v.isEmpty() && v != "null") {
+      String err;
+      if (halmet_config::save_overrides_from_string(v, &err)) {
+        Serial.println("Imported overrides saved to SPIFFS");
+      } else {
+        Serial.printf("Failed to save overrides: %s\n", err.c_str());
+      }
+      // clear the import field after attempt
+      String* def2 = new String("");
+      sensesp::StringConfig clear_cfg(*def2, *path);
+      clear_cfg.save();
+    }
+  });
+
+  // ------------------------------------------------------------------
+  // SPIFFS Cleanup / Format helpers (INACTIVE by default)
+  // ------------------------------------------------------------------
+  // This block implements two guarded, one-shot maintenance actions that
+  // you can enable temporarily when you need to remove old persisted
+  // configuration files or fully reformat SPIFFS on a device.
+  //
+  // Available compile-time flags (do NOT enable these in normal builds):
+  //
+  //  - FORCE_SPIFFS_CLEANUP
+  //      When defined, the firmware will perform a file-by-file cleanup
+  //      at boot: it will iterate over SPIFFS and remove all files except
+  //      the `/www` folder (which contains the web UI static assets). The
+  //      code then writes `/persist_cleanup_done` so the cleanup does not
+  //      repeat on subsequent boots.
+  //
+  //  - FORCE_SPIFFS_FORMAT
+  //      When defined, the firmware will call `SPIFFS.format()` to erase
+  //      the entire SPIFFS filesystem. This is the most destructive option
+  //      and will remove *all* files, including `/www` unless you reflash
+  //      the filesystem image later. It writes `/persist_format_done` so
+  //      it does not repeat.
+  //
+  // Safe usage instructions:
+  // 1) BACKUP: Export `/System/ConfigExport` from the web UI and save it
+  //    externally. Also note WiFi/OTA settings if needed.
+  // 2) ENABLE: In your local copy of `platformio.ini`, temporarily add
+  //    `-D FORCE_SPIFFS_CLEANUP=1` or `-D FORCE_SPIFFS_FORMAT=1` under the
+  //    `[env:halmet]` `build_flags` section. Example:
+  //
+  //      [env:halmet]
+  //      build_flags =
+  //          ${pioarduino.build_flags}
+  //          ${esp32.build_flags}
+  //          -D ARDUINOJSON_ENABLE_COMMENTS=1
+  //          -D FORCE_SPIFFS_CLEANUP=1
+  //
+  // 3) BUILD & FLASH: Build and upload firmware to the device. Monitor the
+  //    serial output — the firmware will print which files it removes and
+  //    whether the format succeeded.
+  // 4) VERIFY: Open the web UI and confirm the desired cleanup occurred.
+  // 5) REVERT: Immediately remove the `-D FORCE_*` flag(s) from
+  //    `platformio.ini` and rebuild, or revert the commit. Leaving the
+  //    flags enabled will re-run the destructive action on every new
+  //    flash/boot, which is dangerous.
+  //
+  // Notes:
+  //  - The code is intentionally guarded with #if defined(...) so it is
+  //    inactive by default. The repository currently does NOT enable any
+  //    FORCE_SPIFFS_* flags in `platformio.ini`.
+  //  - The file-by-file cleanup preserves `/www` to keep the web UI
+  //    assets. The format option erases everything and should be used only
+  //    when you plan to reflash the UI assets or do a full restore.
+  // ------------------------------------------------------------------
+#if defined(FORCE_SPIFFS_CLEANUP)
+  Serial.println("FORCED: performing one-shot SPIFFS cleanup (FORCE_SPIFFS_CLEANUP enabled)");
+  File root = SPIFFS.open("/");
+  if (root) {
+    File file = root.openNextFile();
+    while (file) {
+      String name = String(file.name());
+      if (name != "/www") {
+        Serial.printf("Removing SPIFFS file: %s\n", name.c_str());
+        SPIFFS.remove(name);
+      }
+      file = root.openNextFile();
+    }
+    root.close();
+  }
+  // write the marker so normal code path will not attempt cleanup again
+  const char* cleanup_marker = "/persist_cleanup_done";
+  File mf = SPIFFS.open(cleanup_marker, FILE_WRITE);
+  if (mf) { mf.printf("done\n"); mf.close(); Serial.println("persist_cleanup_done marker written"); }
+#else
+  const char* cleanup_marker = "/persist_cleanup_done";
+  if (!SPIFFS.exists(cleanup_marker)) {
+    Serial.println("persist_cleanup_done marker not found — performing one-shot SPIFFS cleanup");
+    File root = SPIFFS.open("/");
+    if (root) {
+      File file = root.openNextFile();
+      while (file) {
+        String name = String(file.name());
+        if (name != "/www") {
+          Serial.printf("Removing SPIFFS file: %s\n", name.c_str());
+          SPIFFS.remove(name);
+        }
+        file = root.openNextFile();
+      }
+      root.close();
+    }
+    File mf = SPIFFS.open(cleanup_marker, FILE_WRITE);
+    if (mf) { mf.printf("done\n"); mf.close(); Serial.println("persist_cleanup_done marker written"); }
+  }
+#endif
+
+  // One-shot SPIFFS FORMAT (destructive) - formats the filesystem completely
+  // and writes /persist_format_done so it does not repeat. Controlled via
+  // the FORCE_SPIFFS_FORMAT compile-time flag. This is more aggressive than
+  // the file-by-file cleanup above and will erase everything in SPIFFS.
+#if defined(FORCE_SPIFFS_FORMAT)
+  if (!SPIFFS.exists("/persist_format_done")) {
+    Serial.println("FORCED: formatting SPIFFS (FORCE_SPIFFS_FORMAT enabled)");
+    bool ok = SPIFFS.format();
+    Serial.printf("SPIFFS.format() returned: %d\n", ok);
+    File mf2 = SPIFFS.open("/persist_format_done", FILE_WRITE);
+    if (mf2) { mf2.printf("done\n"); mf2.close(); Serial.println("persist_format_done marker written"); }
+  } else {
+    Serial.println("persist_format_done marker present — skipping format");
+  }
+#endif
 
   ///////////////////////////////////////////////////////////////////
   // Analog inputs

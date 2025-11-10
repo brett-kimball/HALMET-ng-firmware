@@ -1,5 +1,7 @@
 #include "halmet_analog.h"
 
+#include "config_flags.h"
+
 #include "sensesp/sensors/sensor.h"
 #include "sensesp/signalk/signalk_output.h"
 #include "sensesp/system/valueproducer.h"
@@ -24,8 +26,17 @@ sensesp::FloatProducer* ConnectAnalogInput(Adafruit_ADS1115* ads1115,
   char mode_config_path[80];
   snprintf(mode_config_path, sizeof(mode_config_path), "/Analog/%s/Input Mode", name.c_str());
   std::vector<String> mode_options = {"active", "passive"};
+#if !DISABLE_LEGACY_CONFIG_ITEMS
   sensesp::SelectConfig* input_mode = new sensesp::SelectConfig("active", "Input Mode", mode_config_path, mode_options, sensesp::SelectType::kSelect);
   ConfigItem(input_mode)->set_title(name + " Input Mode")->set_description("Active (10mA) or Passive (voltage)")->set_sort_order(sort_order - 1);
+#else
+  // When legacy UI is disabled, create the config object with an empty path
+  // so it does not register with the saveable/config system. Use the same
+  // type to keep the rest of the logic unchanged. Allocate the empty path
+  // on the heap so it can bind to String& parameters.
+  auto* _cfg_empty_path_1 = new String("");
+  sensesp::SelectConfig* input_mode = new sensesp::SelectConfig("active", "Input Mode", *_cfg_empty_path_1, mode_options, sensesp::SelectType::kSelect);
+#endif
 
   // === Raw Input ===
   auto* raw_input = new sensesp::RepeatSensor<float>(ads_read_delay, [ads1115, channel, input_mode]() {
@@ -38,14 +49,24 @@ sensesp::FloatProducer* ConnectAnalogInput(Adafruit_ADS1115* ads1115,
   char type_config_path[80];
   snprintf(type_config_path, sizeof(type_config_path), "/Analog/%s/Sensor Type", name.c_str());
   std::vector<String> type_options = {"tank_level", "temperature", "pressure", "rudder_angle", "trim_tab", "transmission_gear"};
+#if !DISABLE_LEGACY_CONFIG_ITEMS
   sensesp::SelectConfig* sensor_type = new sensesp::SelectConfig("tank_level", "Sensor Type", type_config_path, type_options, sensesp::SelectType::kSelect);
   ConfigItem(sensor_type)->set_title(name + " Sensor Type")->set_description("Type of measurement")->set_sort_order(sort_order - 2);
+#else
+  auto* _cfg_empty_path_2 = new String("");
+  sensesp::SelectConfig* sensor_type = new sensesp::SelectConfig("tank_level", "Sensor Type", *_cfg_empty_path_2, type_options, sensesp::SelectType::kSelect);
+#endif
 
   // === Calibration Curve ===
   char curve_config_path[80];
   snprintf(curve_config_path, sizeof(curve_config_path), "/Analog/%s/Curve", name.c_str());
+#if !DISABLE_LEGACY_CONFIG_ITEMS
   auto* calibrated = new sensesp::CurveInterpolator(nullptr, curve_config_path);
   ConfigItem(calibrated)->set_title(name + " Calibration Curve")->set_sort_order(sort_order);
+#else
+  auto* _cfg_empty_path_3 = new String("");
+  auto* calibrated = new sensesp::CurveInterpolator(nullptr, *_cfg_empty_path_3);
+#endif
 
   // Default curve
   if (calibrated->get_samples().empty()) {
@@ -79,41 +100,61 @@ sensesp::FloatProducer* ConnectAnalogInput(Adafruit_ADS1115* ads1115,
   // === Scale Factor ===
   char scale_config_path[80];
   snprintf(scale_config_path, sizeof(scale_config_path), "/Analog/%s/Scale", name.c_str());
+#if !DISABLE_LEGACY_CONFIG_ITEMS
   auto* physical = new sensesp::Linear(1.0f, 0.0f, scale_config_path);
   ConfigItem(physical)->set_title(name + " Scale Factor")->set_sort_order(sort_order + 1);
+#else
+  auto* _cfg_empty_path_4 = new String("");
+  auto* physical = new sensesp::Linear(1.0f, 0.0f, *_cfg_empty_path_4);
+#endif
 
 // Raw SK Path
 char raw_sk_path_config[80];
 snprintf(raw_sk_path_config, sizeof(raw_sk_path_config), "/Analog/%s/Raw SK Path", name.c_str());
 String raw_sk_path_str = "sensors." + sk_id + ".raw";
 String raw_sk_path_config_str = raw_sk_path_config;
-auto* raw_sk_path = new sensesp::StringConfig(raw_sk_path_str, raw_sk_path_config_str);
-ConfigItem(raw_sk_path)
+#if !DISABLE_LEGACY_CONFIG_ITEMS
+  auto* raw_sk_path = new sensesp::StringConfig(raw_sk_path_str, raw_sk_path_config_str);
+  ConfigItem(raw_sk_path)
     ->set_title(name + " Raw SK Path")
     ->set_description("Leave blank or 'null' to disable")
     ->set_sort_order(sort_order + 1);
+#else
+  auto* _cfg_empty_path_5 = new String("");
+  auto* raw_sk_path = new sensesp::StringConfig(raw_sk_path_str, *_cfg_empty_path_5);
+#endif
 
 // Calibrated SK Path
 char cal_sk_path_config[80];
 snprintf(cal_sk_path_config, sizeof(cal_sk_path_config), "/Analog/%s/Calibrated SK Path", name.c_str());
 String cal_sk_path_str = "sensors." + sk_id + ".calibrated";
 String cal_sk_path_config_str = cal_sk_path_config;
-auto* cal_sk_path = new sensesp::StringConfig(cal_sk_path_str, cal_sk_path_config_str);
-ConfigItem(cal_sk_path)
+#if !DISABLE_LEGACY_CONFIG_ITEMS
+  auto* cal_sk_path = new sensesp::StringConfig(cal_sk_path_str, cal_sk_path_config_str);
+  ConfigItem(cal_sk_path)
     ->set_title(name + " Calibrated SK Path")
     ->set_description("Leave blank or 'null' to disable")
     ->set_sort_order(sort_order + 2);
+#else
+  auto* _cfg_empty_path_6 = new String("");
+  auto* cal_sk_path = new sensesp::StringConfig(cal_sk_path_str, *_cfg_empty_path_6);
+#endif
 
 // Physical SK Path
 char phys_sk_path_config[80];
 snprintf(phys_sk_path_config, sizeof(phys_sk_path_config), "/Analog/%s/Physical SK Path", name.c_str());
 String phys_sk_path_str = "sensors." + sk_id + ".physical";
 String phys_sk_path_config_str = phys_sk_path_config;
-auto* phys_sk_path = new sensesp::StringConfig(phys_sk_path_str, phys_sk_path_config_str);
-ConfigItem(phys_sk_path)
+#if !DISABLE_LEGACY_CONFIG_ITEMS
+  auto* phys_sk_path = new sensesp::StringConfig(phys_sk_path_str, phys_sk_path_config_str);
+  ConfigItem(phys_sk_path)
     ->set_title(name + " Physical SK Path")
     ->set_description("Leave blank or 'null' to disable")
     ->set_sort_order(sort_order + 3);
+#else
+  auto* _cfg_empty_path_7 = new String("");
+  auto* phys_sk_path = new sensesp::StringConfig(phys_sk_path_str, *_cfg_empty_path_7);
+#endif
   calibrated->connect_to(physical);
 
 // === Signal K Output ===
