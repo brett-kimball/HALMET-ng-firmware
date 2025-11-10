@@ -4,3 +4,12 @@
 .vscode/extensions.json
 .vscode/launch.json
 .vscode/ipch
+
+# Build artifacts
+firmware.bin
+*.elf
+*.map
+*.hex
+
+# PlatformIO build directory
+.pio/
