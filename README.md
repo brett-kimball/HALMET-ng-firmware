@@ -16,6 +16,12 @@ To get started, follow the generic SensESP [Getting Started](https://signalk.org
 
 ## Hardware Configuration
 
+**Analog Input Expansion:**
+- The firmware supports dual ADS1115 ADCs for expanded analog monitoring
+- The second ADS1115 (channels A11-A14) uses external voltage dividers
+- Compatible breakout board: [R-Divider-Breakout](https://github.com/hallard/R-Divider-Breakout)
+- This provides the same voltage divider design as the built-in HALMET dividers
+
 **Engine Monitoring (Twin Engines):**
 - RPM inputs (D1, D2)
 - Low oil pressure alarms (D3, D4)
@@ -58,7 +64,7 @@ The firmware transmits the following NMEA 2000 Parameter Group Numbers:
 
 ## Latest Release
 
-[Download firmware.bin](firmware.bin) - Latest compiled version
+[Download latest firmware](https://github.com/brett-kimball/HALMET-ng-firmware/releases/latest) - Pre-compiled binaries available on GitHub Releases
 
 ## Configuration
 
