@@ -5,16 +5,13 @@
 
 namespace sensesp {
 
-// I2C pins on HALMET.
 const int kSDAPin = 21;
 const int kSCLPin = 22;
 
-// ADS1115 I2C address
 const int kADS1115Address_0 = 0x4b;
 const int kADS1115Address_1 = 0x48;
 const int kADS1115Address_2 = 0x49;
 
-// BNO055 I2C address
 const int kBNO055Address = 0x28;
 
 // CAN bus (NMEA 2000) pins on HALMET

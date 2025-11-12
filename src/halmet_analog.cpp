@@ -95,6 +95,45 @@ sensesp::FloatProducer* ConnectAnalogSender(
       default_samples[1] = {50.0, 50.0};
       default_samples[2] = {100.0, 0.0};
       break;
+    case WATER_LEVEL:
+      is_active = true;  // assuming resistive, may need excitation
+      measurement_type = "resistance";
+      output_unit = "%";
+      sk_path = "tanks." + instance + ".water.currentLevel";
+      raw_sk_path = "sensors." + hardware_id + ".resistance";
+      curve_title = instance + " Water Level Curve";
+      curve_description = "Map resistance to %";
+      config_path = "/Water/" + instance + "/Level Curve";
+      default_samples[0] = {0.0, 100.0};
+      default_samples[1] = {50.0, 50.0};
+      default_samples[2] = {100.0, 0.0};
+      break;
+    case BLACK_WATER_LEVEL:
+      is_active = true;  // assuming resistive, may need excitation
+      measurement_type = "resistance";
+      output_unit = "%";
+      sk_path = "tanks." + instance + ".blackWater.currentLevel";
+      raw_sk_path = "sensors." + hardware_id + ".resistance";
+      curve_title = instance + " Black Water Level Curve";
+      curve_description = "Map resistance to %";
+      config_path = "/BlackWater/" + instance + "/Level Curve";
+      default_samples[0] = {0.0, 100.0};
+      default_samples[1] = {50.0, 50.0};
+      default_samples[2] = {100.0, 0.0};
+      break;
+    case GRAY_WATER_LEVEL:
+      is_active = true;  // assuming resistive, may need excitation
+      measurement_type = "resistance";
+      output_unit = "%";
+      sk_path = "tanks." + instance + ".grayWater.currentLevel";
+      raw_sk_path = "sensors." + hardware_id + ".resistance";
+      curve_title = instance + " Gray Water Level Curve";
+      curve_description = "Map resistance to %";
+      config_path = "/GrayWater/" + instance + "/Level Curve";
+      default_samples[0] = {0.0, 100.0};
+      default_samples[1] = {50.0, 50.0};
+      default_samples[2] = {100.0, 0.0};
+      break;
     case RUDDER_ANGLE:
       is_active = true;
       measurement_type = "resistance";
@@ -238,91 +277,113 @@ sensesp::FloatProducer* ConnectAnalogSender(
 
   // Signal K output
   if (enable_signalk_output && !sk_path.isEmpty()) {
-    String sk_config_path = "/SK Paths/" + hardware_id + " " + curve_title.substring(0, curve_title.indexOf(' ')) + " Path";
     sensesp::SKMetadata* metadata = nullptr;
     if (type == TEMPERATURE) {
       metadata = new sensesp::SKMetadata("K", instance + " Coolant Temp");
       auto* to_kelvin = new sensesp::LambdaTransform<float, double>(
           [](float f) { return (f - 32.0) * 5.0 / 9.0 + 273.15; }
       );
-      auto* sk_out = new sensesp::SKOutputFloat(sk_path, sk_config_path, metadata);
-      ConfigItem(sk_out)
-          ->set_title(instance + " Coolant Temp SK Path")
-          ->set_sort_order(sort_order + 10);
+      auto* sk_out = new sensesp::SKOutputFloat(sk_path, "", metadata);
       calibrated->connect_to(to_kelvin)->connect_to(sk_out);
     } else if (type == PRESSURE) {
       metadata = new sensesp::SKMetadata("Pa", instance + " Oil Pressure");
       auto* to_pascal = new sensesp::LambdaTransform<float, double>(
           [](float psi) { return psi * 6894.76; }
       );
-      auto* sk_out = new sensesp::SKOutputFloat(sk_path, sk_config_path, metadata);
-      ConfigItem(sk_out)
-          ->set_title(instance + " Oil Pressure SK Path")
-          ->set_sort_order(sort_order + 10);
+      auto* sk_out = new sensesp::SKOutputFloat(sk_path, "", metadata);
       calibrated->connect_to(to_pascal)->connect_to(sk_out);
     } else if (type == RUDDER_ANGLE) {
       metadata = new sensesp::SKMetadata("rad", "Rudder Angle");
       auto* to_rad = new sensesp::LambdaTransform<float, double>(
           [](float deg) { return deg * DEG_TO_RAD; }
       );
-      auto* sk_out = new sensesp::SKOutputFloat(sk_path, sk_config_path, metadata);
-      ConfigItem(sk_out)
-          ->set_title("Rudder Angle SK Path")
-          ->set_sort_order(sort_order + 10);
+      auto* sk_out = new sensesp::SKOutputFloat(sk_path, "", metadata);
       calibrated->connect_to(to_rad)->connect_to(sk_out);
     } else if (type == FUEL_LEVEL) {
       metadata = new sensesp::SKMetadata("ratio", instance + " Fuel Level");
       auto* to_ratio = new sensesp::LambdaTransform<float, double>(
           [](float pct) { return pct / 100.0; }
       );
-      auto* sk_out = new sensesp::SKOutputFloat(sk_path, sk_config_path, metadata);
-      ConfigItem(sk_out)
-          ->set_title(instance + " Fuel Level SK Path")
-          ->set_sort_order(sort_order + 10);
+      auto* sk_out = new sensesp::SKOutputFloat(sk_path, "", metadata);
       calibrated->connect_to(to_ratio)->connect_to(sk_out);
-    } else if (type == THROTTLE_POSITION) {
-      metadata = new sensesp::SKMetadata("ratio", instance + " Throttle Position");
+    } else if (type == WATER_LEVEL) {
+      metadata = new sensesp::SKMetadata("ratio", instance + " Water Level");
       auto* to_ratio = new sensesp::LambdaTransform<float, double>(
           [](float pct) { return pct / 100.0; }
       );
-      auto* sk_out = new sensesp::SKOutputFloat(sk_path, sk_config_path, metadata);
-      ConfigItem(sk_out)
-          ->set_title(instance + " Throttle Position SK Path")
-          ->set_sort_order(sort_order + 10);
+      auto* sk_out = new sensesp::SKOutputFloat(sk_path, "", metadata);
       calibrated->connect_to(to_ratio)->connect_to(sk_out);
+    } else if (type == BLACK_WATER_LEVEL) {
+      metadata = new sensesp::SKMetadata("ratio", instance + " Black Water Level");
+      auto* to_ratio = new sensesp::LambdaTransform<float, double>(
+          [](float pct) { return pct / 100.0; }
+      );
+      auto* sk_out = new sensesp::SKOutputFloat(sk_path, "", metadata);
+      calibrated->connect_to(to_ratio)->connect_to(sk_out);
+    } else if (type == GRAY_WATER_LEVEL) {
+      metadata = new sensesp::SKMetadata("ratio", instance + " Gray Water Level");
+      auto* to_ratio = new sensesp::LambdaTransform<float, double>(
+          [](float pct) { return pct / 100.0; }
+      );
+      auto* sk_out = new sensesp::SKOutputFloat(sk_path, "", metadata);
+      calibrated->connect_to(to_ratio)->connect_to(sk_out);
+    } else if (type == BATTERY_VOLTAGE) {
+      metadata = new sensesp::SKMetadata("V", instance + " Battery Voltage");
+      auto* sk_out = new sensesp::SKOutputFloat(sk_path, "", metadata);
+      calibrated->connect_to(sk_out);
+    } else if (type == EXHAUST_TEMPERATURE) {
+      metadata = new sensesp::SKMetadata("K", instance + " Exhaust Temp");
+      auto* to_kelvin = new sensesp::LambdaTransform<float, double>(
+          [](float f) { return (f - 32.0) * 5.0 / 9.0 + 273.15; }
+      );
+      auto* sk_out = new sensesp::SKOutputFloat(sk_path, "", metadata);
+      calibrated->connect_to(to_kelvin)->connect_to(sk_out);
+    } else if (type == BILGE_LEVEL) {
+      metadata = new sensesp::SKMetadata("ratio", instance + " Bilge Level");
+      auto* to_ratio = new sensesp::LambdaTransform<float, double>(
+          [](float pct) { return pct / 100.0; }
+      );
+      auto* sk_out = new sensesp::SKOutputFloat(sk_path, "", metadata);
+      calibrated->connect_to(to_ratio)->connect_to(sk_out);
+    } else if (type == GENERIC_CURRENT) {
+      metadata = new sensesp::SKMetadata("A", instance + " Current");
+      auto* sk_out = new sensesp::SKOutputFloat(sk_path, "", metadata);
+      calibrated->connect_to(sk_out);
+    } else if (type == GENERIC_TEMPERATURE) {
+      metadata = new sensesp::SKMetadata("K", instance + " Temperature");
+      auto* to_kelvin = new sensesp::LambdaTransform<float, double>(
+          [](float f) { return (f - 32.0) * 5.0 / 9.0 + 273.15; }
+      );
+      auto* sk_out = new sensesp::SKOutputFloat(sk_path, "", metadata);
+      calibrated->connect_to(to_kelvin)->connect_to(sk_out);
+    } else if (type == GENERIC_PRESSURE) {
+      metadata = new sensesp::SKMetadata("Pa", instance + " Pressure");
+      auto* to_pascal = new sensesp::LambdaTransform<float, double>(
+          [](float psi) { return psi * 6894.76; }
+      );
+      auto* sk_out = new sensesp::SKOutputFloat(sk_path, "", metadata);
+      calibrated->connect_to(to_pascal)->connect_to(sk_out);
     } else if (type == TRIM_ANGLE) {
       if (g_single_trim_sensor) {
         // Port
         sensesp::SKMetadata* metadata_port = new sensesp::SKMetadata("rad", "Port Trim Tab");
         auto* to_rad_port = new sensesp::LambdaTransform<float, double>([](float deg) { return deg * DEG_TO_RAD; });
-        auto* sk_out_port = new sensesp::SKOutputFloat("propulsion.port.trimState", "/SK Paths/" + hardware_id + " Port Trim Path", metadata_port);
-        ConfigItem(sk_out_port)
-            ->set_title("Port Trim Tab SK Path")
-            ->set_sort_order(sort_order + 10);
+        auto* sk_out_port = new sensesp::SKOutputFloat("propulsion.port.trimState", "", metadata_port);
         calibrated->connect_to(to_rad_port)->connect_to(sk_out_port);
         // Stbd
         sensesp::SKMetadata* metadata_stbd = new sensesp::SKMetadata("rad", "Stbd Trim Tab");
         auto* to_rad_stbd = new sensesp::LambdaTransform<float, double>([](float deg) { return deg * DEG_TO_RAD; });
-        auto* sk_out_stbd = new sensesp::SKOutputFloat("propulsion.stbd.trimState", "/SK Paths/" + hardware_id + " Stbd Trim Path", metadata_stbd);
-        ConfigItem(sk_out_stbd)
-            ->set_title("Stbd Trim Tab SK Path")
-            ->set_sort_order(sort_order + 11);
+        auto* sk_out_stbd = new sensesp::SKOutputFloat("propulsion.stbd.trimState", "", metadata_stbd);
         calibrated->connect_to(to_rad_stbd)->connect_to(sk_out_stbd);
       } else {
         metadata = new sensesp::SKMetadata("rad", instance + " Trim Tab");
         auto* to_rad = new sensesp::LambdaTransform<float, double>([](float deg) { return deg * DEG_TO_RAD; });
-        auto* sk_out = new sensesp::SKOutputFloat(sk_path, sk_config_path, metadata);
-        ConfigItem(sk_out)
-            ->set_title(instance + " Trim Tab SK Path")
-            ->set_sort_order(sort_order + 10);
+        auto* sk_out = new sensesp::SKOutputFloat(sk_path, "", metadata);
         calibrated->connect_to(to_rad)->connect_to(sk_out);
       }
     } else {
       metadata = new sensesp::SKMetadata(output_unit.c_str(), instance + " " + curve_title);
-      auto* sk_out = new sensesp::SKOutputFloat(sk_path, sk_config_path, metadata);
-      ConfigItem(sk_out)
-          ->set_title(instance + " " + curve_title.substring(0, curve_title.indexOf(' ')) + " SK Path")
-          ->set_sort_order(sort_order + 10);
+      auto* sk_out = new sensesp::SKOutputFloat(sk_path, "", metadata);
       if (type == TRANSMISSION_GEAR) {
         auto* round_transform = new sensesp::LambdaTransform<float, float>([](float input) { return roundf(input); });
         calibrated->connect_to(round_transform);

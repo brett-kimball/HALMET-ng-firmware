@@ -10,8 +10,11 @@ To get started, follow the generic SensESP [Getting Started](https://signalk.org
 
 - **Expanded Analog Inputs**: Support for 8 analog channels (dual ADS1115)
 - **Twin Engine Support**: RPM, oil pressure, and temperature monitoring for two engines
+- **Standardized Interfaces**: SignalK paths and NMEA2000 instances follow marine industry standards
+- **Simplified Configuration**: Most settings are now standardized with minimal web UI options
 - **Other Features**: AIS Gateway, BNO055 compass/attitude, rudder angle, trim tabs, transmission gear
 - **Calibration Mode**: Raw sensor value display on web UI and SignalK for setup and troubleshooting
+- **Future-Ready**: Support for additional sensor types (tanks, battery voltage, exhaust temperature, etc.)
 - **SPIFFS Maintenance**: Built-in cleanup tools for configuration management
 
 ## Hardware Configuration
@@ -37,6 +40,13 @@ To get started, follow the generic SensESP [Getting Started](https://signalk.org
 **Communications:**
 - AIS Transceiver (Serial2)
 - NMEA 2000 output
+
+**Additional Sensor Support:**
+- Tank level sensors (fuel, water, black water, gray water)
+- Battery voltage monitoring
+- Exhaust temperature
+- Bilge level detection
+- Generic voltage, current, temperature, and pressure sensors
 
 ## NMEA 2000 PGNs
 
@@ -68,13 +78,20 @@ The firmware transmits the following NMEA 2000 Parameter Group Numbers:
 
 ## Configuration
 
-Edit `src/main.cpp` to customize for your setup. Parts intended to be customized are marked with `EDIT:` comments.
+The firmware is designed for standard marine engine monitoring applications with minimal configuration required:
+
+- **Standardized Paths**: SignalK paths and NMEA2000 instances follow industry standards
+- **Hardware-Pinned Sensors**: Digital inputs are fixed to HALMET board pins
+- **Calibration Only**: Web UI primarily provides sensor calibration curves
+- **AIS Configuration**: Silent mode and MMSI settings available when AIS hardware is connected
+
+For custom installations, edit `src/main.cpp` to modify sensor assignments or add new sensor types.
 
 ## SPIFFS Maintenance
 
 The firmware includes built-in SPIFFS cleanup functionality for maintenance:
 
-- **Manual cleanup**: Enable `FORCE_SPIFFS_CLEANUP` in `platformio.ini` for file-by-file cleanup
-- **Full format**: Enable `FORCE_SPIFFS_FORMAT` in `platformio.ini` for complete SPIFFS wipe
+- **PlatformIO Erase**: Use `platformio run --target erase --environment halmet` to completely wipe SPIFFS
+- **Legacy Options**: Compile-time flags `FORCE_SPIFFS_CLEANUP` and `FORCE_SPIFFS_FORMAT` still available in code
 
 See `docs/cleanup-and-session.md` for detailed instructions. Always backup your configuration before running cleanup operations.
