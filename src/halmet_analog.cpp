@@ -163,15 +163,15 @@ sensesp::FloatProducer* ConnectAnalogSender(
     case TRANSMISSION_GEAR:
       is_active = true;
       measurement_type = "resistance";
-      output_unit = "ratio";
+      output_unit = "";  // gear state is unitless
       sk_path = "propulsion." + instance + ".transmission.gear";
       raw_sk_path = "sensors." + hardware_id + ".resistance";
       curve_title = instance + " Shifter Curve";
       curve_description = "Map resistance to shifter position";
       config_path = "/Transmission/" + instance + "/Shifter Curve";
-      default_samples[0] = {0.0, 0.0};
-      default_samples[1] = {2500.0, 0.5};
-      default_samples[2] = {5000.0, 1.0};
+      default_samples[0] = {0.0, -1.0};  // Reverse
+      default_samples[1] = {1667.0, 0.0};  // Neutral
+      default_samples[2] = {3333.0, 1.0};  // Forward
       break;
     case THROTTLE_POSITION:
       is_active = true;
@@ -381,16 +381,22 @@ sensesp::FloatProducer* ConnectAnalogSender(
         auto* sk_out = new sensesp::SKOutputFloat(sk_path, "", metadata);
         calibrated->connect_to(to_rad)->connect_to(sk_out);
       }
+    } else if (type == THROTTLE_POSITION) {
+      metadata = new sensesp::SKMetadata("ratio", instance + " Throttle Position");
+      auto* to_ratio = new sensesp::LambdaTransform<float, double>(
+          [](float pct) { return pct / 100.0; }
+      );
+      auto* sk_out = new sensesp::SKOutputFloat(sk_path, "", metadata);
+      calibrated->connect_to(to_ratio)->connect_to(sk_out);
+    } else if (type == TRANSMISSION_GEAR) {
+      metadata = new sensesp::SKMetadata("", instance + " Transmission Gear");
+      auto* round_transform = new sensesp::LambdaTransform<float, float>([](float input) { return roundf(input); });
+      auto* sk_out = new sensesp::SKOutputFloat(sk_path, "", metadata);
+      calibrated->connect_to(round_transform)->connect_to(sk_out);
     } else {
       metadata = new sensesp::SKMetadata(output_unit.c_str(), instance + " " + curve_title);
       auto* sk_out = new sensesp::SKOutputFloat(sk_path, "", metadata);
-      if (type == TRANSMISSION_GEAR) {
-        auto* round_transform = new sensesp::LambdaTransform<float, float>([](float input) { return roundf(input); });
-        calibrated->connect_to(round_transform);
-        round_transform->connect_to(sk_out);
-      } else {
-        calibrated->connect_to(sk_out);
-      }
+      calibrated->connect_to(sk_out);
     }
   }
 
