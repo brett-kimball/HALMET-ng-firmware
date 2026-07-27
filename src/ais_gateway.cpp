@@ -143,8 +143,8 @@ static void SendPGN129794(const char* payload) {
   uint8_t shipType = (uint8_t)vdm_uint(payload, 232, 8);
   double toBow     = (double)vdm_uint(payload, 240, 9);
   double toStern   = (double)vdm_uint(payload, 249, 9);
-  double toPort    = (double)vdm_uint(payload, 258, 4);
-  double toStbd    = (double)vdm_uint(payload, 262, 4);
+  double toPort    = (double)vdm_uint(payload, 258, 6);
+  double toStbd    = (double)vdm_uint(payload, 264, 6);
   tN2kMsg msg;
   SetN2kPGN129794(msg,
                   5, N2kaisr_Initial, mmsi, imo,
@@ -174,18 +174,18 @@ static void SendPGN129041(const char* payload) {
   d.Latitude         = (lat_raw == 0x3412140) ? N2kDoubleNA : lat_raw / 600000.0;
   double toBow       = (double)vdm_uint(payload, 219, 9);
   double toStern     = (double)vdm_uint(payload, 228, 9);
-  double toPort      = (double)vdm_uint(payload, 237, 4);
-  double toStbd      = (double)vdm_uint(payload, 241, 4);
+  double toPort      = (double)vdm_uint(payload, 237, 6);
+  double toStbd      = (double)vdm_uint(payload, 243, 6);
   d.Length                    = toBow + toStern;
   d.Beam                      = toPort + toStbd;
   d.PositionReferenceTrueNorth = toBow;
   d.PositionReferenceStarboard = toStbd;
-  d.GNSSType                  = (tN2kGNSStype)vdm_uint(payload, 245, 4);
-  d.Seconds                   = (uint8_t)vdm_uint(payload, 249, 6);
-  d.OffPositionIndicator       = (bool)vdm_uint(payload, 255, 1);
-  d.RAIM                      = (bool)vdm_uint(payload, 264, 1);
-  d.VirtualAtoNFlag            = (bool)vdm_uint(payload, 265, 1);
-  d.AssignedModeFlag           = (bool)vdm_uint(payload, 266, 1);
+  d.GNSSType                  = (tN2kGNSStype)vdm_uint(payload, 249, 4);
+  d.Seconds                   = (uint8_t)vdm_uint(payload, 253, 6);
+  d.OffPositionIndicator       = (bool)vdm_uint(payload, 259, 1);
+  d.RAIM                      = (bool)vdm_uint(payload, 268, 1);
+  d.VirtualAtoNFlag            = (bool)vdm_uint(payload, 269, 1);
+  d.AssignedModeFlag           = (bool)vdm_uint(payload, 270, 1);
   d.AISTransceiverInformation  = N2kaischannel_A_VDL_reception;
   d.AtoNStatus                = 0;
   tN2kMsg msg;
