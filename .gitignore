@@ -13,3 +13,7 @@ firmware.bin
 
 # PlatformIO build directory
 .pio/
+
+# Local dev files — network/host specifics, not for the repo
+DEV_HANDOFF.md
+scripts/

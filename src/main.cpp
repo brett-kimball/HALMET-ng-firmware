@@ -691,11 +691,15 @@ void setup() {
   SetupLogging(ESP_LOG_DEBUG);
   Serial.begin(115200);
 
-  // Initialize the application framework
+  // Initialize the application framework.
+  // IMPORTANT: enable_ota() MUST remain here. Removing it disables OTA and
+  // requires a physical USB serial flash to recover remote update capability.
+  // The password is set via HALMET_OTA_PASSWORD in platformio.ini — change it
+  // there, not here, so the uploader and firmware stay in sync.
   BUILDER_CLASS builder;
   sensesp_app = (&builder)
                     ->set_hostname("halmet")
-                    ->enable_ota("thisisfine")
+                    ->enable_ota(HALMET_OTA_PASSWORD)
                     ->get_app();
 
   // SPIFFS maintenance (compile-time controlled)

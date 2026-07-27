@@ -4,7 +4,6 @@
 #include <Adafruit_SSD1306.h>
 #include <Wire.h>
 #include <Arduino.h>
-#include <String.h>
 #include "sensesp_base_app.h"
 
 namespace halmet {
